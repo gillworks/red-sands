@@ -1,0 +1,47 @@
+{
+  "name": "red-sands",
+  "version": "0.1.0",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "capture": "node tools/capture.mjs --out shots/latest --w 1920 --h 1080",
+    "capture:fast": "node tools/capture.mjs --fast --out shots/latest",
+    "smoke": "node tools/capture.mjs --smoke --fast --out shots/latest",
+    "metrics": "python3 tools/metrics.py --shots shots/latest",
+    "motion": "node tools/capture.mjs --motion --fast --out shots/motion --frames 24 && python3 tools/motion.py --dir shots/motion",
+    "scout": "node tools/scout.mjs --out shots/scout --n 40 --worst 6"
+  },
+  "keywords": [
+    "threejs",
+    "webgl",
+    "webgl2",
+    "open-world",
+    "procedural-generation",
+    "game",
+    "western",
+    "proceduralcontent",
+    "shaders",
+    "glsl"
+  ],
+  "license": "MIT",
+  "description": "An open-world western that runs entirely in the browser. Procedurally generated terrain, sky, weather, town and audio — no art assets. three.js + WebGL2.",
+  "dependencies": {
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1",
+    "vite": "^8.2.0"
+  },
+  "type": "module",
+  "private": false,
+  "homepage": "https://github.com/gillworks/red-sands#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gillworks/red-sands.git"
+  },
+  "bugs": {
+    "url": "https://github.com/gillworks/red-sands/issues"
+  }
+}

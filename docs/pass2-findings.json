@@ -1,0 +1,393 @@
+{
+ "lensFindings": {
+  "scatter": [
+   {
+    "shot": "golden_hour_vista",
+    "impact": "critical",
+    "problem": "Scatter is uniform-density noise sprayed edge to edge. Boulders and conifers are distributed at one constant density across the entire visible bowl with no thickets, no clearings, no negative space and no size hierarchy — roughly the same instance every 8-12m for 2km. Real terrain clusters vegetation into drainages and leeward slopes and leaves ridgetops and wear-paths bare. Uniform density gives the eye no landmark to fix on, so it cannot triangulate distance and the whole valley collapses into a tabletop model. Identical failure in high_noon_desert (scrub) and moonlit_ridge (trees).",
+    "fix": "Multiply the placement probability by a clustered density mask instead of using flat blue-noise: two octaves of fBm at ~250m and ~60m world scale remapped through a smoothstep with a hard cut (density = smoothstep(0.45,0.62,fbm)), so ~35% of the area drops to zero instances and forms genuine clearings. Add a second mask keyed to terrain curvature so instances concentrate in concave drainage lines and thin on convex ridge crests. Then push instance scale variance to at least 4x rather than the current ~1.5x, and add one or two hero-scale outcrops per 500m to act as landmarks. This is a density-function change, not new art, and it fixes five frames at once."
+   },
+   {
+    "shot": "high_noon_desert",
+    "impact": "medium",
+    "problem": "A corrupt rainbow/magenta rectangular blob renders at roughly x=60,y=515 on the left edge — clearly a billboard or imposter sampling an uninitialised or wrongly-formatted texture. It is small but it is a hard rendering bug in an otherwise presentable frame and it would fail any submission check.",
+    "fix": "Trace the imposter atlas generation — most likely a render target created without the correct format/colour space, or an atlas page being sampled before it has been written on the first frame the LOD band activates. Assert the atlas is fully populated at init before any instance is allowed to switch to the imposter LOD, and flag the atlas texture SRGBColorSpace explicitly. Add a bright-chroma outlier check to the capture harness as a regression assertion."
+   },
+   {
+    "shot": "dawn_mist_valley",
+    "impact": "critical",
+    "problem": "The hero boulder at frame centre (x 520-900, y 500-780) is a completely untextured primitive: one flat orange albedo across the whole mesh, smooth interpolated shading over large low-poly facets, straight polygon chords in the silhouette, zero crevice AO, zero lichen, zero bedding planes. The same untextured-lump material appears on the river_bend foreground boulder (x 0-420, y 560-1080), the town_street rock pile (x 1050-1250, y 560-660) and every night_camp fire-ring stone. These are the largest, closest, most-looked-at objects in four of ten shots and none of them has a texture bound.",
+    "fix": "Bind the existing rock material via triplanar world-space projection (blend exponent 6-8, normalised) so no UV unwrap is needed: albedo + a 1m-scale detail normal + a 0.1m micro normal, roughness broken by the same fBm. Add a curvature/cavity term from the second derivative of the normal map to darken and desaturate crevices, and an up-facing term pow(dot(N,up),3) that lifts value toward bleached ochre on top planes. Then subdivide the boulder geometry once and noise-displace along the normal so the silhouette stops reading as straight chords. This is the highest value-per-hour change in the whole review."
+   },
+   {
+    "shot": "night_camp",
+    "impact": "medium",
+    "problem": "The camp logs are a corrugated repeat — a hard ring pattern stacking down each cylinder at a fixed period that reads as ribbed hose or screw thread, not timber. There is no grain running along the log axis, no end-grain on the cut faces, no bark, no char where they meet the fire. The ground under the camp is also a visibly rectangular decal patch with a hard straight boundary cutting across the terrain at x560-1400, y620-1000.",
+    "fix": "Fix the cylinder UV: the wood texture is mapped so its tiling axis runs circumferentially instead of axially — swap the UV channels and set the axial repeat from the log's world length so grain runs lengthwise, then generate a separate end-cap material with concentric rings. Add a char/soot gradient driven by distance to the fire emitter. For the ground patch, replace the hard-edged quad with a projected decal using a noise-modulated alpha falloff at its border, or blend it into the terrain splat weights rather than compositing a separate mesh."
+   }
+  ],
+  "weather": [
+   {
+    "shot": "storm_plains",
+    "impact": "critical",
+    "problem": "The entire frame is a flat milky white wash. Aerial-perspective in-scatter is being applied from zero distance with no height falloff, so the ground twenty metres in front of camera sits at the same luminance and near-zero saturation as the sky. The horizon line is barely resolvable, the plain-to-mesa separation that existed in pass 1 is gone, and the near-field scrub is grey mush. Depth ordering in this shot is now zero — worse than pass 1, which the previous review called the strongest frame in the set.",
+    "fix": "Add a start distance to the extinction integral so no in-scatter accumulates below ~30m, and a height falloff exp(-(y - fogBaseY)/H) with H around 250m so haze pools in the low ground rather than filling the camera's own altitude. Clamp total in-scatter to ~0.85 so distant surfaces never fully reach sky luminance and a silhouette always remains. Storm light in reality keeps warm ochre chroma in the near ground under a cold sky — that near/far chroma contrast is the entire drama of the shot and it is currently being erased by a fog term with no near-plane guard."
+   },
+   {
+    "shot": "storm_plains.png",
+    "impact": "critical",
+    "problem": "Total fog whiteout. The 0.1st-percentile luma is 0.317 and the frame minimum luma is 0.106 — there is no black anywhere in the image. Mean saturation is 0.160 and the ground twenty metres from camera measures 0.175, so surfaces that should still be at full chroma are neutral grey. The extinction is being applied from distance zero with no height gradient, so it veils the near field instead of pooling in the low ground. Pass 1 identified this exact mechanism and asked for a start distance; the opposite happened and the density went up.",
+    "fix": "Add a start distance to the in-scatter integral so extinction is zero below ~30m, then multiply density by a height falloff exp(-(y - fogBaseY)/H) with H around 250m so the haze pools in the valley and thins at the camera. Clamp total in-scatter alpha to about 0.75 at max range so distant geometry never fully saturates to the fog colour, and drive the whole term off ctx.env.fogDensity rather than a hard-coded storm constant. Target: 0.1st-percentile luma under 0.06 and mean saturation above 0.25 with the near ground holding warm ochre under the cold sky — that near-warm / far-cold contrast is the only drama this shot has."
+   },
+   {
+    "shot": "storm_plains",
+    "impact": "medium",
+    "problem": "Heavy rain is falling and the ground has no wetness response whatsoever. The plain is a uniformly matte grey-white field — no darkening of the albedo, no roughness drop, no specular sheen, no standing water in the low ground, no rain impact ripples, no darkened saturation in the soil. Foreground laplacian mean is 0.024 and local std 0.040, the lowest in the set: under the storm grade every surface has degenerated into flat featureless value with no material identity left at all.",
+    "fix": "Drive a wetness term from ctx.env.wetness into the shared surface function: multiply albedo by mix(1.0, 0.55, wetness) with a stronger pull in the porous layers, drive roughness down toward 0.15 and specular F0 up toward water's 0.02, and accumulate a puddle mask from terrain curvature and flow accumulation so water pools where it geologically would. Add a rain-ripple normal on the puddle mask only. Without this the storm reads as fog rather than rain."
+   }
+  ],
+  "vegetation": [
+   {
+    "shot": "forest_interior",
+    "impact": "high",
+    "problem": "Every canopy card is riddled with scattered black single-pixel speckle where the alpha test is failing — dense enough across the upper half of frame that the foliage reads as dirty static rather than leaves. Same speckle on the tree in player_third_person and on the distant billboard band in golden_hour_vista and river_bend. It also destroys the silhouette of every tree against the sky, which is the one thing that would give the treeline depth.",
+    "fix": "Three parts. (1) Turn on alphaToCoverage on the leaf material with MSAA enabled, and drop the alphaTest to ~0.33, rather than relying on a hard cutout at high threshold. (2) The alpha channel is being mip-filtered without rescaling — recompute the alpha mip chain so the coverage ratio is preserved per level (multiply each mip's alpha by cutoff/mean(alpha)), otherwise distant cards dissolve into exactly this dither. (3) Set anisotropy 16 on the leaves atlas. This is the single cheapest legibility fix in the set — it cleans three frames without touching any geometry."
+   },
+   {
+    "shot": "player_third_person",
+    "impact": "high",
+    "problem": "The grass cards are roughly 2-3x oversized relative to the character. Individual blades read as 20-30cm wide and reach mid-shin on a figure that should be 1.8m, which makes the man read as a doll and the forest floor as a lawn shot from macro distance. This is the single scale-anchor frame in the whole set and the ground cover is actively contradicting it. The same oversized cards appear in dawn_mist_valley, where they sit as discrete detached tufts on bare grey soil rather than forming a continuous sward.",
+    "fix": "Cut grass card world width to ~4-6cm and height to ~25-40cm with per-instance scale jitter, and raise instance count to compensate so coverage stays continuous — density, not blade size, is what makes grass read. Add a shorter secondary layer at ~8cm for ground closure so the soil does not show as bare grey between tufts, and fade the top layer out by ~25m into the painted terrain texture. Verify by rendering a 1.8m reference capsule in the shot and confirming blades reach below the ankle."
+   },
+   {
+    "shot": "forest_interior",
+    "impact": "medium",
+    "problem": "The shot is named for dappled light through canopy and there is none. The forest floor is uniformly lit flat lavender-grey with no shadow pools, no light shafts, no bright patches where the canopy breaks. There is also zero aerial recession inside the stand — trees 60m back have the same contrast and saturation as trees 5m away, so the wood has no depth and reads as a flat green wall. Every tree is the same species with the same bottlebrush branch structure at the same uniform radial angles, repeated.",
+    "fix": "Opt the canopy cards into the near shadow cascade via L.requestShadowCaster — the dappled shadow is the shot, not the trees. Add short-range volumetric shafts by raymarching P.depthTexture against the sun with the shadow map sampled along the march. Apply the same per-channel distance extinction indoors with a much shorter scale height (~150m) so trunks stack in tone with depth. For the trees: at least three trunk-curve variants and randomised branch phyllotaxis with per-instance branch-angle and droop jitter, plus a second species with a different silhouette — the current repeat is visible within a single frame."
+   },
+   {
+    "shot": "forest_interior",
+    "impact": "critical",
+    "problem": "The canopy is riddled with isolated black speckle: connected-component analysis of the crop x700-1500, y60-560 finds 541 dark blobs, 489 of them 6px or smaller — hundreds of stray black dots scattered across the foliage. The same speckle appears on the bush right of the character in player_third_person and on the distant tree at x1700-1850 in river_bend. Simultaneously, 6-8% of foreground pixels in player_third_person, river_bend and dawn_mist_valley carry a >0.15 single-pixel luma step, and foreground laplacian p99 reaches 0.933 in high_noon_desert — every grass blade and leaf edge is a raw hard-edged jaggy. Nothing in this set would survive camera motion; it would boil.",
+    "fix": "Two things. (1) The speckle is hashed/dithered alpha or alpha-to-coverage left unresolved — switch foliage to alpha-to-coverage with a proper mip-level alpha rescale (Castano: renormalise each mip so coverage is preserved) so cutout thresholds do not collapse to isolated texels in the mip chain, and clamp any negative/NaN radiance from the leaf translucency term before it writes black. (2) Turn on the jittered-projection TAA resolve — postfx.velocityBuffer already exists so it is nearly free — and write correct motion vectors for the wind-animated vertex shader on every instanced card, otherwise TAA will smear the foliage instead of resolving it."
+   },
+   {
+    "shot": "dawn_mist_valley",
+    "impact": "medium",
+    "problem": "Grass instances have no ground contact. Every card's base terminates in a hard horizontal cut against the terrain with no contact-AO darkening, no soil transition and no bent-over blades at the base, so the tufts read as plastic spikes stuck into a flat plane rather than plants growing out of soil. The same is visible in player_third_person and river_bend. The tufts are also all the same silhouette motif at varied scale, and their spatial distribution is near-uniform with a semi-regular spacing rather than clustered into thickets and bare patches.",
+    "fix": "Add a per-vertex AO gradient baked into the card geometry (dark at the base, unity at the tip) multiplied by a screen-space or capsule contact shadow, and tint the bottom 15% of each card toward the sampled terrain albedo so the transition is chromatic as well as tonal. For distribution, replace the uniform sampler with clustered blue noise: a low-frequency fBm density field gating a Poisson-disc sampler so density swings from zero to saturated over 10-30m. Add at least three distinct blade/tuft silhouettes and randomise the atlas slice per instance."
+   },
+   {
+    "shot": "high_noon_desert",
+    "impact": "medium",
+    "problem": "Alpha-tested vegetation LOD transitions are visible as raw screen-door dither. There is a black checkerboard-weave diamond at approximately x720-790, y860-900 and a fully dithered shrub at x100-230, y690-770 (crop coordinates from the x0-900, y380-700 region at 2x), plus a rainbow-fringed dither blob at x40-100, y495-540 in the full frame where chromatic aberration is being applied on top of the un-resolved dither pattern.",
+    "fix": "The cross-fade dither is never being resolved because there is no temporal accumulation. Either land the TAA resolve (which converts the dither into a real cross-fade for free) or replace screen-door dithering with a proper geometric LOD cross-fade using dual-draw alpha blending over a short distance band. Also move the chromatic aberration pass to run before, not after, any dithered content is resolved — or mask it to the outer 15% of the frame as §5 specifies, so it stops amplifying interior aliasing into colour noise."
+   },
+   {
+    "shot": "forest_interior",
+    "impact": "medium",
+    "problem": "Tree bark and canopy have no material detail. Trunks carry a stretched vertical smear with a visibly repeating stripe period and hard stair-stepped aliasing on their silhouettes; there is no bark plate relief, no normal map, no root flare, no moss, no dirt at the base, and the texture is identical from base to crown. The canopy foliage is soft painterly green blobs with no needle or leaf silhouette at all — the alpha cutout shape is doing no work, so at 2x zoom the canopy is smeared mush rather than resolvable foliage.",
+    "fix": "Generate a proper bark material: a ridged-fBm displacement forming vertical plates with a tangent-space normal at ~2cm scale, cavity-darkened fissures, and a triplanar world-space projection to kill the stretch. Scale the trunk UV by world height so the pattern does not compress on tall trees, and taper a root-flare AO into the bottom 1m. For the canopy, the leaf atlas needs real alpha silhouettes with per-needle-cluster shapes plus a two-sided translucency term (transmission tinted toward yellow-green) so backlit cards read as foliage rather than flat paint."
+   }
+  ],
+  "postfx": [
+   {
+    "shot": "golden_hour_vista",
+    "impact": "high",
+    "problem": "Aerial perspective is now present in luminance but is chromatically warm-white, not blue. The far range and the haze layers are cream/ochre at the same hue as the foreground, so depth reads as dust suspended in front of the mountains rather than kilometres of air. Combined with in-scatter that saturates too fast, the whole frame sits in a narrow high-key band with no deep value anywhere — the composition loses its foreground plane and the ridges float. dawn_mist_valley is worse: the upper two-thirds is a single near-white value with the far hill dissolved entirely.",
+    "fix": "The extinction term is running per-channel but the in-scatter colour is being sampled from a horizon tint that is itself too warm. Separate the two lobes properly: Rayleigh in-scatter tinted (0.30,0.45,0.85) applied with betas ~5.7x stronger in blue than red, plus a Mie lobe with Henyey-Greenstein g=0.76 that is warm-white but gated to within ~25 degrees of the sun vector so it does not smear around the whole horizon ring. Ridges away from the sun then go blue while ridges near it stay warm — that hue split across the frame is what generates the discrete stacked layers the brief asks for. Also clamp maximum in-scatter so the far range keeps ~15% contrast rather than washing to sky value."
+   },
+   {
+    "shot": "golden_hour_vista.png",
+    "impact": "high",
+    "problem": "No frame in the set contains a true white. Peak luma per shot: golden_hour 0.916, forest_interior 0.920, player_third_person 0.920, river_bend 0.914, town_street 0.910, dawn_mist 0.914, high_noon 0.890, night_camp 0.884, moonlit_ridge 0.863. Maximum channel value anywhere across all ten is 240/255. The tonemap shoulder is asymptoting to roughly 0.92 instead of 1.0, so the sun disc, the campfire core, water speculars and sky-through-canopy all sit behind a veil. Nothing clips (0.000% everywhere), which is correct, but nothing reaches white either, which reads as a low-contrast film-scan wash rather than a filmic curve.",
+    "fix": "One-line shoulder fix in Grade.js: the curve's white point is set below 1.0. Re-normalise so the ACES/Hable shoulder asymptotes at 1.0 and set the linear white input to whatever radiance the sun disc actually carries, so specular highlights and emissives resolve to 250-255 while the shoulder still rolls off the approach. Keep the ~0.02 cool black lift that is already working. Cheapest change in this review and it lifts all ten frames simultaneously."
+   },
+   {
+    "shot": "moonlit_ridge.png",
+    "impact": "medium",
+    "problem": "Night grain is chromatic. In a flat sky patch the high-frequency residual measures 8.05 8-bit levels in the green channel against 4.34 red and 4.46 blue — green noise at nearly double the other channels, visible as coloured speckle across the whole night sky and the shadowed slopes. night_camp shows the same imbalance at lower amplitude. Meanwhile in daylight the residual is 0.0026-0.0035 (under one 8-bit level), i.e. the grain §5 asks for is effectively absent where it should be visible. The noise budget is exactly backwards: none where you want it, coloured speckle where you do not.",
+    "fix": "The dither is being applied per-channel in linear space before the tonemap, so it gets amplified hardest where the curve is steepest — which at these levels is the green channel. Move the grain to display space AFTER the tonemap, generate it as a single monochrome sample applied to all three channels equally, and scale amplitude by sqrt(luma) so it vanishes in the deep shadows instead of dominating them. Then raise the daylight amplitude to roughly 2-3 8-bit levels so the grain actually reads as film."
+   },
+   {
+    "shot": "golden_hour_vista.png",
+    "impact": "low",
+    "problem": "Halation runs backwards. Radial profile around the brightest pixel gives R-B of +0.074 at r0-15, +0.054 at r30-50, +0.037 at r80-120 and +0.036 out to r450 — the glow is warmest at the core and cools outward. Real film halation is the inverse: red scatters furthest through the emulsion, so the core desaturates toward white while the outer halo reddens. dawn_mist_valley at least trends the right way (+0.060 core to +0.092 at r350) but its core is not hot enough to sell it. The effect is present but its chromatic gradient is wrong, so the sun reads as a soft airbrush rather than a film bloom.",
+    "fix": "Split the bloom into per-channel blur radii — red about 1.6x the green radius, blue about 0.7x — and composite the halation layer weighted toward red. Source it only from the >1.0 linear luminance region, not from the whole frame, so the wash across the sky goes away and the glow stays anchored to the disc."
+   },
+   {
+    "shot": "forest_interior.png",
+    "impact": "low",
+    "problem": "Sky-through-canopy blows to hard-edged white holes. The gaps reach L=0.920 with a sharp alpha-test boundary straight into 0.3-0.4 foliage, no bloom feathering across the edge and no light wrap onto the leaf silhouettes. Combined with the heavy alpha-test speckle on the canopy cards, the top third of the frame reads as punched-out paper. The shot is named for dappled light and there are no visible god rays or shafts through the canopy despite the sun being directly in frame.",
+    "fix": "Feather the bright sky into the foliage: run the bloom source at a lower threshold so the canopy edges pick up light wrap, and dither or alpha-to-coverage the leaf cutouts so the boundary is not a single-pixel step. Then raymarch a small number of steps against P.depthTexture sampling the sun shadow map for volumetric shafts — a canopy with the sun in frame is the second-best place after a campfire for cheap volumetrics to pay for themselves, and it is what the shot is named for."
+   }
+  ],
+  "terrain": [
+   {
+    "shot": "high_noon_desert",
+    "impact": "high",
+    "problem": "Every mesa in the frame tops out at the same elevation, producing a dead-flat horizontal skyline running the full width of the shot with only shallow notches. There is no butte standing proud, no lower bench in front, no talus cone, no incised canyon — the range reads as a single extruded slab, so the eye gets no vertical landmark to measure distance against and the 4km depth collapses. Same one-elevation plateau line in storm_plains and along the right edge of moonlit_ridge.",
+    "fix": "The thermal-erosion talus pass is flattening everything to a common base level. Drive the plateau cap elevation from a low-frequency fBm (~800m wavelength) so caprock sits at different altitudes across the range, and add a second erosion pass at a steeper talus angle on ~20% of cells to leave isolated buttes standing above the general level. Then break the skyline with slope-driven outcrop instances from scatter along the ridge crest so the silhouette gets sub-heightfield detail. A skyline needs at least three distinct height tiers to read as a range rather than a wall."
+   },
+   {
+    "shot": "town_street",
+    "impact": "high",
+    "problem": "The main street is one repeating ~1-2m sand tile with completely flat normals — no cart ruts, no hoofprints, no boot scuffs, no gravel, no dung, no puddles, no wheel-polished centre crown. It occupies the bottom third of the frame at 2-15m from camera, which is precisely where the eye lands, and it holds no detail at any scale below the tile period. forest_interior has the same failure: the forest floor is a flat lavender-grey blur with no needle litter, no fallen branches, no root flare, no duff.",
+    "fix": "Multiply three detail tilings on the ground material at ~16m, ~2m and ~0.25m world scale with descending contrast, and put a tangent-space detail normal on the 0.25m layer only, faded in over the first 8m so it cannot alias. Add runtime decal projection for the wear: a spline-driven rut/trail mask along the street centreline that darkens, smooths and depresses (parallax or POM) the albedo/normal, plus scattered debris instances. In the forest, drive a litter layer off canopy density so needle duff accumulates under trees and thins in the clearings."
+   },
+   {
+    "shot": "golden_hour_vista",
+    "impact": "high",
+    "problem": "The mountain drainage is not geologically plausible. Every groove on the range (crop x1150-1750, y240-540) runs parallel in a single orientation with roughly matched spacing, none of them branch, none of them converge into a trunk channel, none has a V-notch floor, and there is no talus cone at any slope break and no exposed bedrock at any ridge crest. It reads as a raked sand pile. The same combing appears across the whole ridgeline in moonlit_ridge. Separately, level horizontal terrace bands still cross the mid-slopes in high_noon_desert (crop x0-900, y380-700) at constant elevation — residual contour banding from an altitude-driven splat.",
+    "fix": "Run the hydraulic erosion solver with proper flow accumulation so channels merge downhill into a dendritic network with widening trunks, then thermal erosion at a ~35 degree talus angle to produce the flat-topped scarps and scree cones. Deposit the thermal sediment as an actual scree material where curvature is negative at the slope-to-flat transition. For the residual terracing, perturb the height input to every splat threshold with a triplanar fBm at 5-30m wavelength before the smoothstep and drive the blend by height-map max rather than a linear lerp so strata interlock instead of running dead level."
+   }
+  ],
+  "water": [
+   {
+    "shot": "river_bend",
+    "impact": "high",
+    "problem": "The water is a flat pale-blue sheet stamped onto the terrain with a hard aliased cutout edge — no wet-sand darkening band, no foam line, no shallow-to-deep absorption gradient, no reflection of the mountain that sits directly across it, and no visible normal animation. It reads as spilled milk, not a river, and because it does not reflect anything it contributes nothing to the depth read. high_noon_desert has the same flat white-blue sheet with an even harder shoreline and stray vertical scrub instances standing in open water.",
+    "fix": "Read postfx.depthTexture, compute waterDepth = sceneDepth - waterSurfaceDepth, and drive (a) an alpha feather over the first ~0.5m of depth to kill the cutout edge, (b) a Beer-Lambert absorption ramp so shallows read sandy and deep reads slate, and (c) a foam mask on depth < 0.15m modulated by flow-map magnitude. Feed a wetness term back through terrain.registerMaterialUser to darken albedo and drop roughness in a 2m band around the waterline. Add Fresnel-weighted SSR against the depth buffer so the range actually appears in the surface — a reflected mountain doubles the perceived distance across the water for almost no cost. Mask scatter placement against ctx.world.isWater so nothing spawns mid-lake."
+   }
+  ],
+  "town": [
+   {
+    "shot": "town_street",
+    "impact": "high",
+    "problem": "The town exists but is blockout-grade and it breaks the illusion three ways. (1) Facades are flat extruded boxes — no window recess, no door reveal, no cornice, no boardwalk edge depth — so at grazing sun they show zero self-shadowing and read as painted flats. (2) The Sheriff's adobe wall on the right is one texture tiling at roughly 40cm period across a 15m wall, and the repeat is plainly visible, which the brief lists as an automatic rejection. (3) A two-metre grey boulder has spawned in the middle of Main Street beside the Sheriff's office — the scatter mask is not being cut against the town footprint. The street is also completely unpopulated: no people, no horses, no crates, no barrels beyond one, no ruts.",
+    "fix": "(1) Inset every window and door 12-15cm and add a 20cm cornice/parapet band to each facade — pure geometry, a few hundred triangles per building, and it is what generates the shadow-line detail that sells a street at low sun. (2) Stochastic/hex tiling on the adobe and plank albedo, plus a low-frequency per-building colour and dirt-height mask so no two walls are the same value. (3) Subtract the town footprint polygon from the scatter density mask with a 5m margin. (4) Place 20-30 street props (barrels, crates, hitching rails, troughs, wheel ruts) clustered against the boardwalk edges, not distributed evenly."
+   },
+   {
+    "shot": "town_street",
+    "impact": "critical",
+    "problem": "The sheriff facade is blatantly, measurably tiled. Autocorrelation across the wall (crop x1560-1900, y470-700) peaks at lag 65px with correlation 0.49 horizontally and lag 74px at 0.32 vertically — the identical cluster of dark brick blotches is stamped roughly nine times across one wall. It is a flat 2D albedo with no normal map, so there is no mortar depth, no per-course shadowing, no edge wear at the corner, no dirt streak under the window sill and no sun bleaching on the up-facing parapet. The left barn roof tiles at an 11-16px period (correlation 0.67) and the street ground at an 11px period (0.52). §5 lists 'tiling you can see' as an automatic rejection.",
+    "fix": "Stochastic (hex) tiling on every architectural material: sample the albedo three times at hash-offset UVs per triangular hex region and blend by barycentric weight — this kills the periodic repeat outright at roughly 3x sample cost. Layer a low-frequency fBm breakup map at ~8m and ~30m world scale onto the result (0.8-1.2 luminance, small hue jitter) so no two bays of the wall match. Add a real tangent-space normal map for the stone courses plus a cavity-driven dirt term, and a rain-streak mask projected downward from the sill and roof edge."
+   }
+  ],
+  "lighting": [
+   {
+    "shot": "night_camp",
+    "impact": "high",
+    "problem": "The camp is the closest-to-camera set dressing in the entire set and it is the least believable frame. The fire clips to pure white across a large area with zero hue — no flame colour at all. Smoke renders as a solid opaque near-black cauliflower with a hard silhouette hanging in mid-air, reading as a floating boulder. The fire-ring stones and the logs are blown to flat white faceted lumps with no texture. And a hard-edged straight-sided ground patch cuts diagonally across the lower-left foreground where the camp flatten decal ends without feathering. Nothing here establishes that this is a place a person sleeps.",
+    "fix": "Clamp the flame emissive so the core sits inside the filmic shoulder rather than clipping — author it at blackbody ~1900K, roughly (1.0,0.42,0.10) normalised, and scale intensity not colour, with a chromatic bloom kernel (wider radius on red) so the halo warms instead of whitening. Replace the smoke mesh with PT.emitter('smoke') soft-particle-faded against P.depthTexture at low opacity with per-particle rotation. Bind rock_boulder and wood_weathered via procTextures with triplanar world UVs to the ring stones and logs. Feather the camp ground decal with a noise-modulated radial alpha falloff over 1.5m instead of a hard polygon boundary."
+   },
+   {
+    "shot": "night_camp.png",
+    "impact": "critical",
+    "problem": "The campfire is still a colourless blob and this is verbatim the pass 1 critical defect, unfixed. Flame core measures RGB (0.764, 0.769, 0.731) at saturation 0.075 with GREEN as the strongest channel. The lower flame is (0.703, 0.695, 0.654) sat 0.103. The light pool on the sand measures sat 0.120 and the lit fire-ring rocks sat 0.099 — the entire key light in the one shot built around a key light has no hue. Radial profile around the peak gives R-B of only +0.029 at the core rising to +0.064 at r30-50, so even the bloom is barely warm.",
+    "fix": "Author the flame emissive in linear radiance at a 1800-2000K blackbody, roughly (1.0, 0.42, 0.10) normalised, and scale INTENSITY only — never push the colour vector toward white to get brightness. Cap the peak so it lands inside the filmic shoulder (target core luma ~0.85, saturation 0.35+) and let the tonemap desaturate only the innermost few pixels. Use a chromatic bloom kernel with a wider radius on red than blue so the halo warms outward instead of whitening. The light-pool falloff must be inverse-square from a registered L.addLight({flicker}) point light, not a painted radial gradient."
+   },
+   {
+    "shot": "golden_hour_vista.png",
+    "impact": "high",
+    "problem": "Shadow occupancy is incoherent between terrain and scattered props. In the near field (y 750-1080) the ground sits in a large blue shadow mass at L=0.289 while the boulders and trees standing inside that same shadow are rendered fully sun-lit and warm. An object cannot be keyed by a sun that the ground beneath it does not see. Separately, the shot is named for long shadows and there are none: the dark foreground is one amorphous soft field with no raking directional shapes, and its boundary with the lit ground is a 200px blur that reads as fog, not a penumbra. Shadows are doing no compositional work in the money shot.",
+    "fix": "Two things. (1) The near CSM cascade is covering terrain but scatter/vegetation instances are not sampling it — confirm every InstancedMesh is opted in via L.requestShadowCaster AND is receiving, and that the instanced materials actually read the CSM uniforms rather than falling back to the ambient-only path. (2) Tighten the near cascade around the camera and use PCSS with the kernel scaled by the sun's 0.53deg angular diameter, so contact points stay sharp and penumbrae widen with occluder distance. At this sun elevation the boulders and trees should be throwing shadows several times their own height across the frame; that is the composition."
+   },
+   {
+    "shot": "town_street.png",
+    "impact": "medium",
+    "problem": "The cool skylight fill lobe is not firing in this shot. Street shadows measure RGB (0.387, 0.308, 0.241), B-R -0.146 — the shadows are WARMER than neutral, when §5 requires skylight to fill them cool blue. golden_hour_vista and player_third_person get this right (shadow B-R +0.076 and +0.071 against warm lit values), so the two-lobe ambient exists but is being overridden here, probably by a warm-afternoon ambient tint applied as a flat multiply over both lobes. The result is that the largest compositional shape in the frame — the cast shadow across the street — has no colour separation from the lit ground.",
+    "fix": "Keep the sky lobe's chromaticity independent of the time-of-day warm grade: modulate the upward-facing (0.35, 0.45, 0.65) sky term by intensity only, and let the warm ochre bounce term on the downward component carry the afternoon warmth. Target street shadow B-R around +0.04 to +0.08 against a lit B-R near -0.25 — that warm/cool split is what makes a shadow read as shadow rather than as darker dirt."
+   }
+  ],
+  "clouds": [
+   {
+    "shot": "moonlit_ridge",
+    "impact": "high",
+    "problem": "Clouds render as hard-edged dark blobs with bright white undersides — the shading is inverted, with dark cores and hot rims, so they read as solarised rocks flying in formation rather than cloud. In storm_plains the deck is a field of hard white puffs punched into a flat dark blue slab with visible stair-stepped alpha edges and no vertical structure or anvil. In both cases the cloud layer sits at one flat altitude, which caps the sky and removes the vertical scale cue that makes an open landscape feel large.",
+    "fix": "At minimum: the blocky edges are a low-resolution alpha texture being point-upsampled — switch to linear filtering with a signed-distance alpha and add per-sprite rotation, scale and density jitter. Fix the inverted shading by lighting the sprite with a dual-lobe Henyey-Greenstein phase (g=0.8 forward blended with g=-0.3 back) against the moon/sun vector plus a vertical density gradient so bases go dark and tops silver, rather than whatever inverse term is running now. Properly: quarter-res raymarch through a worley-fbm field, 32 primary steps with 5 shadow steps toward the light, Beer-Powder extinction exp(-d)*(1-exp(-2d)), depth-aware bilateral upsample. Give the storm deck real vertical extent with an anvil — a towering cell is the single strongest scale cue available in a flat-plains shot."
+   },
+   {
+    "shot": "storm_plains.png",
+    "impact": "high",
+    "problem": "The cloud deck is shaded inside-out. The puffs render brighter than the sky behind them with hard elliptical alpha edges, no darker bases, no self-shadowing and no forward-scatter hotspot — the result reads as a solarised negative rather than a storm cell. There is also a dead-flat horizontal top edge where the deck terminates, which reads as a painted ceiling. In a shot specced for 'dark towering cloud' the clouds are the brightest thing in frame.",
+    "fix": "Beer-Powder extinction: exp(-d) * (1 - exp(-2d)), with 4-6 secondary steps toward the sun for self-shadowing, so bases go dark while silhouette edges keep the bright powder rim. Apply a dual-lobe Henyey-Greenstein phase (g=0.8 forward blended with g=-0.3 back) so cells near the sun glow and cells away from it read as solid dark form. Add a strong vertical density gradient so the deck has an anvil and a base rather than a slab, and fade the top edge into the sky instead of terminating it."
+   }
+  ],
+  "player": [
+   {
+    "shot": "player_third_person",
+    "impact": "high",
+    "problem": "The character and horse are present, which fixes the pass-1 blocker, but neither survives inspection and neither is doing its scale job properly. The man is an untextured flat-shaded mannequin — no hands, no face, cylindrical limbs, a coat that is one flat colour with no fold shading. The horse is a smooth featureless orange blob with no mane, no tail geometry, no hoof definition and no coat texture. Critically, neither has a readable contact shadow: the horse's legs disappear into grass with no darkening or occlusion at the hooves, so it floats and the scale anchor it was added to provide is undermined.",
+    "fix": "Contact shadow first — it is the cheap half and it matters more than the mesh. Add a per-entity capsule AO projection or a small tight shadow cascade (0.1-8m) with the figure and horse opted in via L.requestShadowCaster, plus a soft radial contact-darkening decal at each foot/hoof. Then bind leather/fabric_wool procTextures materials to the character and generate a hair-shaded coat texture with a darker underside and dirt on the lower legs for the horse; add tail and mane cards. Sun-facing rim light on both silhouettes at golden hour would do more than any additional polygon count."
+   },
+   {
+    "shot": "player_third_person",
+    "impact": "high",
+    "problem": "The character and horse are untextured primitives at the exact framing the game will ship in. The coat is one flat tan value with no fabric weave, no folds, no seams, no stitching, no hem wear; the hat is a cylinder plus a flat brim disc; the face is a blank ovoid with a single dark blob; hands and boots are capped cylinders. The horse is a smooth clay form with one flat brown albedo — no coat hair, no muscle definition, no mane or tail geometry, no tack detail beyond a flat red saddle quad.",
+    "fix": "Generate a procedural cloth material for the coat: an anisotropic weave normal at ~1mm, a sheen/fuzz lobe (Charlie or Ashikhmin) for the grazing-angle rim that wool needs, and a curvature-driven wear mask that lightens elbows, shoulders and hem. For the horse, a hair-flow tangent map driving anisotropic specular along the coat direction plus a dirt/sweat accumulation term on the belly and flanks. Even without a rig, adding a normal-mapped fold pattern and cavity AO to the existing meshes moves this from placeholder to readable."
+   }
+  ],
+  "sky": [
+   {
+    "shot": "golden_hour_vista.png",
+    "impact": "critical",
+    "problem": "The hero shot's sky is white and its aerial perspective is chromatically inverted. Sampling a sky column away from the sun: zenith (y=20) RGB (0.819, 0.841, 0.857), B-R +0.038, saturation 0.045 — neutral. There is no cool upper sky to counterpoint the warm horizon, so the entire frame is one pink-cream wash. On the ground the layers run near B-R +0.027, midground -0.038, mid ridge -0.076, far ridge -0.038: distance gets WARMER, not bluer, the exact inverse of the §5 spec. Depth is carried purely by value (near L=0.289 rising to far L=0.752) and saturation collapse (0.314 to 0.051), which reads as dust haze, not air. Zoomed, there are only two readable depth planes — one mountain silhouette and one continuous plain gradient — not stacked layers.",
+    "fix": "Separate the sky dome integral from the aerial-perspective term: the fog/turbidity in-scatter is currently being summed across the full view ray including the zenith, which is why the top of frame washes out. Evaluate Rayleigh optical depth against the actual view-ray zenith angle so the upper sky retains beta_R-dominant blue (target zenith saturation 0.20-0.30, B-R around +0.15) while the horizon stays pale. For the ground, split the in-scatter into a Mie lobe restricted to within ~25deg of the sun vector (warm) and a Rayleigh lobe everywhere else (blue) — right now a single warm horizon tint is being lerped in isotropically, which warms the ridges on the shaded side of frame where they should go cold slate. Verify the far ridge measures B-R more positive than the midground before calling it done."
+   },
+   {
+    "shot": "moonlit_ridge.png",
+    "impact": "high",
+    "problem": "There is no aerial perspective at night at all. Far ridge measures L=0.144, B-R +0.098, local std 0.0332; the near foreground measures L=0.138, B-R +0.083, local std 0.0249. Across the entire visible depth the value delta is 0.006, the chroma delta is 0.015, and local contrast is HIGHER at distance than in the foreground — the ordering is inverted. The far ridge therefore does not separate from the near ground and the frame collapses into a single flat silhouette. Pass 1 filed this and it is unfixed. Whole-frame range is also crushed: 1st-percentile 0.041, 99th 0.357.",
+    "fix": "Run the same per-channel extinction/in-scatter path the daylight shots already use, driven by moonlight instead of sun: transmittance exp(-beta_ext * d) per channel plus in-scatter toward a night sky luminance tinted roughly (0.30, 0.38, 0.55). The night in-scatter pedestal is what lifts distant blacks and separates the ridges. Add the same exp(-(y - baseY)/H) height term so the valley between the ridges holds visible haze — that pooled band is what makes a moonlit ridgeline read as three planes instead of one. Target: far ridge at least 0.06 luma above the near ground with local std at most 60% of the near value."
+   }
+  ],
+  "procTextures": [
+   {
+    "shot": "player_third_person.png",
+    "impact": "medium",
+    "problem": "Forest greens are emerald, which §5 lists as an automatic rejection. Vegetation pixels in the near grass band measure median hue 136.4deg with the 75th percentile at 154deg — that is squarely on the green-cyan side, not yellow-shifted. forest_interior runs median 90deg with p75 at 129deg. The open-country shots got this right (river_bend 69.7deg, high_noon 73.7deg), so the fix exists and simply has not been applied to the forest canopy and understory atlases.",
+    "fix": "Apply the same hue treatment the prairie grass already got to leaves_atlas and foliage_scrub: rotate hue about 40-50deg toward yellow to land the median at 75-90deg, pull saturation down toward luminance by ~35%, and lift value slightly for sun-bleaching on up-facing canopy. Also note river_bend grass is still over-saturated at 0.363 where dry western grassland wants 0.15-0.25 — improved from pass 1's 0.43 but not there yet."
+   },
+   {
+    "shot": "player_third_person",
+    "impact": "high",
+    "problem": "Pass 1's procTextures finding on surface honesty is untouched. There is no edge wear, no dirt accumulation in crevices and no sun-bleaching on up-facing planes on any material in any of the ten shots — terrain, rock, bark, cloth, adobe, timber and cobble are all uniformly clean and uniformly lit. §5 calls all three a baseline requirement, and their absence is why every material reads as plastic even where the albedo is correct.",
+    "fix": "Two shared shader terms injected into every material via onBeforeCompile, so one change hits the whole game: (a) a cavity term derived from the second derivative of the sampled normal that darkens value ~30% and pulls saturation down in crevices, and (b) an up-facing term pow(saturate(dot(N, worldUp)), 4) that lifts value and rotates hue toward bleached ochre on horizontal planes. Add a third convexity term (inverse cavity) that desaturates and lightens exposed edges for wear. Roughly twenty instructions total, applied globally."
+   }
+  ]
+ },
+ "forensicTells": {
+  "forest_interior.png (1920x1080)": {
+   "verdict": "hobby",
+   "confidence": 96,
+   "tells": [
+    "Zero cast shadows on the ground. The sun is directly visible burning through the canopy at ~(950,230), yet the forest floor across the entire frame has no dappled light, no canopy shadow pattern, and no directional shadowing at all — the ground is uniformly lit. No AAA forest renderer ships without cascaded shadow maps; this reads as a scene with sun lighting on foliage but no shadow pass.",
+    "No contact shadows / ambient occlusion anywhere. Every trunk meets the ground with a hard silhouette edge and no darkening at the base; the fallen log at bottom-left (~x 100-450, y 990-1030) rests on the floor with no grounding shadow, so it reads as floating. Grass blades in the crop around (1300-1600, 900-1050) are cut off flat at their bases against the ground plane with no blend or AO.",
+    "Leaves are literally flat uniform-fill ellipses. Zooming the bush at (1400-1900, 700-1080) shows individual leaves as solid single-color cream ovals and lozenges — no texture, no veins, no per-leaf normal variation, no specular, no translucency gradient. That is procedurally generated leaf-card geometry with a flat albedo, not a photo-scanned leaf atlas.",
+    "Alpha-test punch-through artifacts: dense black speckle holes and dark fringing scattered through the canopy (very visible around 600-1000, 300-700). This is classic alpha-clip with mipmapped alpha plus a non-premultiplied leaf texture producing black halos at cutout edges. Modern AAA foliage uses alpha-to-coverage/dithered TAA resolve and does not produce this pepper pattern.",
+    "Distant trunks are truncated floating blocks. In the right midground (1400-1900, 350-650) tree trunks appear as short rectangular slabs that begin and end in mid-air, with no root, no taper, and no canopy connecting to them — LOD/geometry culling failure that would never survive AAA QA.",
+    "No aerial perspective or atmospheric depth. Trees 40+ metres back have identical contrast, saturation and value to the foreground trunks. There is no fog, no depth-based desaturation, no light scattering between layers — the scene is flat in Z, which is the single biggest departure from RDR2/Ghost of Tsushima forest interiors.",
+    "Ground plane is a low-frequency blurred texture with visible bilinear texel smearing and no detail normal map, no parallax, no pebbles/twigs/leaf-litter meshes, and no tessellation. The blue-grey floor around (1250-1650, 950-1080) magnifies into soft blobs, indicating a low-res texture stretched over a large flat quad.",
+    "Bark is a single vertically-tiled stripe texture on a plain cylinder. The leaning trunk at (250-700, 700-1080) shows repeated vertical bands with zero normal-mapped relief; the trunk at ~(590,1090 crop-space) terminates in a flat cut-off cap rather than a modelled break or root flare.",
+    "Repeated identical assets with no variation. The conifer canopies use one repeated mesh at a handful of rotations, and the leaning-trunk motif recurs at least four times at the same angle — no unique art, no dressing, no procedural variation of the sort AAA vegetation kits ship with.",
+    "Highlights clip to flat paper-white with a simple radial bloom halo and no filmic tonemapping roll-off (sky region 700-1200, 0-300). No lens dirt, no anamorphic streaking, no eye-adaptation gradient — a naive HDR-to-LDR clamp plus a bloom blur.",
+    "Whole-frame smeared/streaky brushstroke artifacting on ground and canopy, consistent with aggressive temporal accumulation or a cheap upscale being applied over undersampled geometry, rather than the clean high-sample AA of a shipped console title.",
+    "No HUD, no letterboxing, no photo-mode framing, no character, no lens/depth-of-field. It is a raw first-person free-camera view into an empty vegetation scene — the framing of a renderer test, not of gameplay or a capture from a shipped title."
+   ]
+  },
+  "night_camp.png": {
+   "verdict": "hobby",
+   "confidence": 97,
+   "tells": [
+    "HARD-EDGED SQUARE GROUND DECAL: under the fire pit there is a perfectly straight-sided quad with a visible sharp corner (~x=830,y=1055 and running up-right to ~x=1400,y=560) where a lighter 'dirt patch' texture is pasted over the terrain. Zero edge blending, zero alpha falloff, a literal polygon silhouette. No shipped AAA title leaves a rectangular outline around a campfire ground patch.",
+    "LOGS ARE OPEN-ENDED HOLLOW TUBES: the log pile at right (and the burning logs in the pit) are low-poly cylinders with NO end caps — you can see straight down the inside of the near log's bore at ~(1490,700). Procedural cylinder geometry that was never capped.",
+    "UV TILE REPETITION ON THE LOGS: the bark is one small texture tiled ~12x along each log's length, producing an identical chevron/zigzag 'corrugated hose' rhythm that repeats with machine regularity. Facet bands are also visible across the cylinder (flat per-face normals, no smoothing groups / no normal map).",
+    "NO SHADOWS AT ALL FROM AN INTENSE POINT LIGHT: the fire is the brightest thing in frame yet the tripod poles, the logs, the fire-ring rocks and the log stack cast nothing onto the ground. No contact shadows, no ambient occlusion anywhere — objects sit on the terrain as if pasted, with no darkening at the intersection line.",
+    "FIRELIGHT HAS NO COLOR TEMPERATURE: everything the fire touches is cream/white/monochrome. A wood fire is ~1800-2000K; there is no orange core, no red-to-yellow gradient, no warm-to-cool falloff across the lit rocks. This is an untinted white point light, not a fire.",
+    "FLAME IS BINARY-ALPHA CUTOUT SPRITES: the flames are flat white teardrop/blob silhouettes with aliased, hard-clipped edges (cluster around x=800-900, y=400-620). Several sprites are visibly truncated by their own quad boundary — a black rectangular notch cuts through the flame at ~(870,470) and ~(940,520). No additive blending, no soft-particle depth fade, no emissive gradient.",
+    "SPARKS ARE IDENTICAL UNIFORM DISCS: four embers at ~(1000,30),(995,70),(1000,120),(1000,152) are the same size, same brightness, same soft radial falloff, and sit in a near-perfect vertical line at even spacing. A particle emitter with no size variance, no turbulence, no velocity streaking/motion blur.",
+    "SMOKE PLUME IS UNLIT FROM BELOW: the dark cauliflower blob above the fire is a handful of large overlapping billboard puffs at uniform grey. The underside directly over the flame — the part that should be blasted with orange scattered light — is the same flat grey as the top. No per-particle lighting, no self-shadowing, no density variation.",
+    "BACKGROUND CONIFERS ARE SHREDDED BY UNRESOLVED DITHERED ALPHA: the trees on the horizon (~x=850-1100 and ~x=1450-1600, y=0-300) break up into horizontal scanline-like bands and noise instead of a clean silhouette. Stochastic/alpha-to-coverage cutout with no TAA to resolve it — AAA either resolves this or uses proper alpha-tested LODs.",
+    "GRASS IS A REGULAR GRID OF IDENTICAL CARDS: the midground vegetation (x=200-800, y=150-600) is the same alpha-cutout quad repeated on visibly regular rows with near-identical rotation and scale, producing corduroy-like row banding. No density noise, no clumping, no wind variance, and it is uniformly bright with no distance darkening.",
+    "SKY IS AN EMPTY FLAT GRADIENT: a night sky with zero stars, no moon, no atmospheric scattering variation, and visible vertical banding. Distant terrain is an untextured uniformly-lit slab with a hard silhouette and no aerial-perspective fog gradation.",
+    "FIRE-RING ROCKS ARE FLAT-SHADED LOW-POLY: the white stones around the pit read as ~12-20 face icosphere-ish blobs with visible planar facets and pure flat albedo. No normal map, no crevice/roughness detail, no specular breakup.",
+    "TERRAIN ALBEDO IS AN UPSAMPLED BLUR WITH VISIBLE TILE SEAMS: the ground left of the decal shows large rectangular blocks of slightly different tone (mip/tile boundaries) over a soft low-frequency noise with no pebble, no gravel, no macro-variation layer.",
+    "CHARRED LOGS ARE PURE BLACK ZERO-DETAIL POLYGONS: the burnt pieces in the pit clamp to flat black with hard polygonal silhouettes and no material response to the adjacent extreme light source."
+   ]
+  },
+  "river_bend.png": {
+   "verdict": "hobby",
+   "confidence": 96,
+   "tells": [
+    "Right-side tree (~1640-1900, 350-520) is a bare L-system armature: straight black cylinder branches with a few dozen flat, untextured grey-brown quads stuck on as 'leaves'. No alpha-cutout foliage silhouette, no leaf texture, no translucency/SSS. AAA foliage (SpeedTree-class) never resolves into visible unlit rectangles at this screen size.",
+    "Water is fully opaque flat-shaded pale blue with hand-painted-looking streak noise. Zero sky reflection, zero Fresnel brightening toward the horizon (it actually gets DARKER toward the horizon — physically backwards), no refraction, no specular sun glint, no depth-based shoreline transparency, no foam line. Shoreline is a hard polygonal cut against the bank.",
+    "Foreground boulder (0-460, 540-1080) fills ~20% of frame yet has no surface detail whatsoever: no normal map, no pores/cracks/lichen, just a smeary low-frequency diffuse blur. Texel density for a 3-5m object is on the order of a distant LOD.",
+    "No contact shadows or AO anywhere. The big foreground rock, the mid-ground boulders (~1200-1500, 650-900), and the right-hand tree all sit on the ground with zero darkening at the intersection — they read as floating/clipping into the grass card layer.",
+    "Shadowed sides of the boulders crush to near-pure black (43,212 pixels with max channel <20) with a hard faceted terminator. No blue skylight ambient fill, no GI bounce. That is a single directional light with essentially no ambient/IBL term.",
+    "Foreground grass is a field of 2-4px wide flat vertical quads with uniform per-blade color, hard flat tops, and no per-blade shading gradient, no specular, no bend/wind variation, no self-shadowing. At ~5m from camera it reads as vertical smear mush rather than geometry.",
+    "Visible rectangular tiling/banding seams across the grass field (horizontal repeat bands around y=880-1000) — the grass instance patch grid is showing through as a periodic pattern.",
+    "Distant butte (~800-980, 420-540) is textured with a high-contrast repeating horizontal brick/mortar tile that reads as masonry, not rock strata, and it ignores the aerial-perspective fog applied to everything at its depth — it stays dark and saturated while the terrain beside it is washed to haze.",
+    "No HDR range at all: brightest pixel in the whole frame is 237, with no sun disc, no bloom, no blown speculars anywhere — combined with crushed blacks this is an LDR forward-ish pipeline, not a AAA HDR/tonemapped one.",
+    "Sky is a near-perfect linear vertical gradient (sampled 175,195,211 at top to 225,226,215 at horizon) with no cloud volumetrics and no Mie forward-scatter brightening around the sun. Two thin flat streaks top-left are the only 'clouds'.",
+    "Geometry silhouettes are stair-stepped/aliased (boulder edges, butte edge) while textures are simultaneously over-blurred, and the thin tree branches carry red/blue fringing — an aliasing+resolve profile inconsistent with a shipped console title's TAA.",
+    "Mid-ground vegetation resolves into identical repeated grey-green blobs with no LOD transition detail and no variety in species or scale — asset kit repetition is visible at a glance."
+   ]
+  },
+  "town_street.png (1920x1080, western town street, low sun)": {
+   "verdict": "hobby",
+   "confidence": 96,
+   "tells": [
+    "No global illumination / no bounce light. The barn's shaded facade (left, x0-500) collapses to a near-flat dark maroon with almost no readable detail, while the sand two metres away is blown-out bright. A single directional light plus one flat constant ambient term. RDR2/GoT would push strong warm bounce off that sand onto the shaded wall.",
+    "No ambient occlusion anywhere. The agave/cactus clumps (x430-620, y760-900) meet the ground with zero contact darkening; the boulder at x1050-1250 sits on the street with no AO ring and reads as floating; the porch/awning interiors on the left row are the same brightness as the open street apart from the flat direct shadow. Every object-to-ground junction is a hard, unshaded cut.",
+    "The parked wagon (x555-740, y655-750) casts no visible shadow at all, in a scene with a hard low sun that is throwing a 400px building shadow across the street right next to it. Shadow-caster culling or a too-small shadow cascade.",
+    "Zero-thickness geometry. Roof planes on the barn, the red saloon, and the sheriff building terminate in paper-thin silhouettes with no fascia, no gutter, no rafter tails. The saloon's slanted roof edge (x1140-1290, y290-330) is a single flat quad seen edge-on.",
+    "Textures are pure albedo with painted-in shading; no normal maps. Zoomed on the SHERIFF stonework (x1330-1920), the blocks show no self-shadowing or relief despite raking sunlight; the 'brick' pattern is uniformly lit and visibly repeats. Same for the barn's plank siding: the planks are drawn, not modelled or normal-mapped.",
+    "Inconsistent texel density / UV scale between adjacent faces of the same building. The sheriff's front facade stone blocks are roughly half the size of the blocks on its return wall, and there is a hard vertical seam where the plank material changes scale. World-space texel density is not normalised.",
+    "Foreground ground texture is a single low-res tiled diffuse, visibly blurred by the time it reaches the bottom of the frame (y900-1080). No parallax, no tessellation, no scattered pebble meshes, no decals, no blend layers, no wheel ruts (the one rut is a painted texture line). Same tile repeats across the entire street with a detectable period.",
+    "Doors and windows are flat quads with painted rectangles, not geometry. The sheriff's door has no frame, no thickness, no interior; the two windows are unreadable white smears. No parallax-mapped interiors, no glass reflection response, no SSR anywhere in the image.",
+    "Telegraph pole is a low-segment untapered cylinder with visible silhouette faceting and vertically smeared texture; the crossarm is a raw box. The wires are perfectly straight, uniform-width, aliased black lines with no catenary sag between poles.",
+    "Distant mountains are a soft, featureless pale mass with no ridge/valley geometry, no rock detail, no cloud shadows. The church steeple (x800-840) is a bare cone on a box with no cross or trim. Distant LOD is a painted backdrop, not real terrain.",
+    "Shadows are single-depth and hard: measured across the big ground shadow boundary at y=700 the luminance transition happens over roughly 2-3 px with no penumbra widening with distance from the caster, and the shadowed region is a uniform multiply with no colour shift.",
+    "Effectively zero camera/post signature. Highpass noise std in a flat sky patch is 0.84 (no film grain), and that patch contains only 132 unique RGB values across 20,000 pixels - visible gradient banding with no dithering. Sampling a vertical edge on the pole shows R, G and B transitioning together: no chromatic aberration, no lens distortion. Every shipped AAA title in the reference class stamps grain, CA, vignette and dithered gradients on the frame.",
+    "Anti-aliasing is a 1-pixel edge blend, not TAA. Roof lines, the steeple and the balcony railing show stair-stepping and thin-geometry breakup - the balcony balusters on the red saloon (x1155-1265, y440-510) shimmer/disintegrate rather than being resolved by temporal accumulation.",
+    "Scene population is near-empty and non-repeating in the wrong way: no NPCs, no horses, no birds, no barrels/crates/signage clutter, no wind on the vegetation. The few vegetation instances are identical alpha cards at identical scale and orientation, with hard-cut alpha edges and no translucency/SSS.",
+    "The boulder cluster (x1050-1250) is one blobby mesh with a smeared, near-featureless grey texture, no crevice shading, and it interpenetrates the boardwalk railing with no blend or debris."
+   ]
+  },
+  "high_noon_desert.png (1920x1080, 8-bit RGB, no EXIF/metadata)": {
+   "verdict": "hobby",
+   "confidence": 96,
+   "tells": [
+    "MISSING-TEXTURE CHECKERBOARD rendered in-world. Several thin vertical props near the shoreline resolve to literal alternating black/white 1-pixel checker: strongest cluster at x1095-1099/y596-605, plus x1139/y596, x1395/y628, and a larger one at roughly x368-388/y575-595. I confirmed these numerically as extreme local-contrast clusters, not JPEG noise (the file is PNG). A shipped AAA title does not render placeholder checker geometry in a screenshot.",
+    "BROKEN INSTANCED MESH at roughly x40-115/y500-560: a rectangular blob of repeating diagonal hatch, i.e. a bush/vegetation instance whose geometry or UV set failed, drawn as a tiling quad lattice. Hard rectangular silhouette, no organic outline.",
+    "NO HDR / NO TONEMAP ROLLOFF. Maximum pixel value in the ENTIRE image is 235; zero pixels above 250. Sunlit desert sand at high noon with no clipped highlight, no bloom, no specular glint anywhere. The whole frame sits in a compressed midtone band (mean 132). This is an LDR forward render, not a filmic HDR pipeline.",
+    "FLAT 2D CLOUDS. The two clouds (around x1750-1850/y360-420) are opaque, uniformly white alpha blobs with soft-but-featureless edges. Zero internal density variation, zero darkened base, zero forward-scattered silver lining, no relationship to sun direction. Volumetric clouds are table stakes for the reference class.",
+    "ZERO WATER-SHORE INTERACTION. The waterline meets sand as a razor 1-2px hard edge across the whole right side (y~570-660). No wet-sand darkening gradient, no foam, no depth-based transparency ramp, no refraction, no caustics.",
+    "WATER HAS NO REFLECTIONS AND NO PERSPECTIVE ON ITS WAVES. Boulders sitting inches from the waterline cast nothing into the water. The 'waves' are screen-parallel light streaks at roughly constant frequency from near shore all the way to the far bank, i.e. a UV-tiled plane with no distance-based tiling compression.",
+    "NO FOREGROUND LOD RAMP. At the very bottom of frame (nearest camera, ~1-2m) the grass is still 15-20px cross-quad billboards with hard stair-stepped alpha-test edges and only two color tones. No individual blades, no translucency, no wind deformation, no per-instance variation. Foreground and midground vegetation render at identical fidelity.",
+    "GROUND IS A SINGLE LOW-RES TILING ALBEDO. No normal-map relief, no parallax, no tessellation, no detail-texture blend-in at close range. Pebbles and cracks are painted into the diffuse and go visibly soft/blurry near the bottom edge (mip/aniso limit).",
+    "NO AMBIENT OCCLUSION OR CONTACT SHADOWS. Grass tufts and boulders sit ON the terrain with no darkening at the intersection; several rocks visibly float or cut hard into the ground plane. No crevice darkening between clustered rocks. Ambient is a flat uniform fill with no sky occlusion, no GI bounce.",
+    "REPEATED ROCK INSTANCES. The same 3-4 low-poly boulder meshes recur across the whole plain at every depth, same texture, same orientation family, faceted silhouettes visible even at the near-field left edge (x0-300/y580-680).",
+    "HEIGHTMAP TERRACING ON THE MESAS. The cliff faces (x560-1200/y440-500) show horizontal stair-step banding, i.e. quantized heightmap sampling, not sculpted geometry.",
+    "BILLBOARD TREELINE. Distant trees are near-identical flat sprites in one LOD, scattered along a slope-mask contour, each with an unlit blue-black blob at its base instead of a cast shadow.",
+    "NO TEMPORAL AA. Hard 1-pixel jaggies on every distant tree silhouette and on all alpha-test vegetation edges, with red/cyan chromatic fringing surviving on single-pixel features (visible along the ridgeline at y~430-460 and on foreground grass edges). A TAA history buffer would have dissolved both.",
+    "NO CAMERA/LENS MODEL AT ALL: no depth of field, no vignette, no bloom, no lens dirt, no exposure adaptation, no chromatic aberration that is deliberate rather than aliasing-driven.",
+    "LIGHTING DIRECTION INCONSISTENT WITH 'HIGH NOON'. Long streaked shadows run toward lower-left across the foreground while mesa faces and boulders show essentially flat, direction-free shading. The dark ground streaks read as painted into the terrain albedo rather than cast."
+   ]
+  },
+  "golden_hour_vista.png (1920x1080)": {
+   "verdict": "hobby",
+   "confidence": 94,
+   "tells": [
+    "ZERO geometric anti-aliasing. Sampled the mountain ridge silhouette against the sky at four x positions: the sky-to-rock transition happens in a single pixel with no intermediate value (e.g. x=1000 reads 227, 228, 226, 226.7 -> 183.7, 174). Every shipped AAA console title in the reference class runs TAA (RDR2's is famously heavy) and would produce a 2-4px blended ramp on a distant, fog-hazed edge. A hard 1px step means no MSAA, no TAA, no FXAA/SMAA resolve at all.",
+    "Texture-minification breakdown on a mid-ground structure at approx (560-640, 590-660). It renders as a chaotic checkerboard of saturated magenta, red, purple and yellow pixels — a high-frequency texture sampled far below Nyquist with no mipmap chain and no anisotropic filtering. This is a raw sampling failure. AAA pipelines never ship this; they have mip chains, discrete LODs, and imposters specifically so this cannot happen.",
+    "Untamed high-frequency shimmer in the vegetation/detail layer. Measured per-pixel vertical delta std: 21.9/19.5/15.6 RGB on a flat mid-ground patch versus 1.1/1.0/1.0 in the sky. The scene is aliasing violently everywhere except the empty gradient — consistent with alpha-test cutout foliage rendered with no coverage AA and no temporal resolve.",
+    "Flat untextured placeholder geometry. At approx (930-1000, 650) there is a perfectly axis-aligned yellow rectangle lying on the ground with uniform flat fill, no shading gradient, no thickness, and no cast shadow. It reads as an unlit primitive/decal, not an authored art asset.",
+    "Procedural-scatter distribution, not authored placement. Rocks are 2-3 identical meshes repeated hundreds of times at near-uniform density across the whole valley floor with no ecological clustering, no drainage/erosion logic, no debris fields at slope bases, and no correlation to terrain features. AAA open worlds (Horizon, GoT) hand-comp this or at minimum layer rule-based ecotones.",
+    "No PBR surface response on hero-scale rocks. The large foreground rock at approx (620, 900-1050) has flat lambert-looking shading, a hard faceted terminator, visible vertical UV smearing on its upper surface, no normal-mapped micro detail, no specular breakup, and no ambient-occlusion contact darkening where it meets the ground.",
+    "Foreground has no ground clutter geometry. The nearest-to-camera terrain — where RDR2/Horizon put dense per-blade grass with wind, subsurface backlight and contact shadows — is a low-res diffuse smear with sparse tiny cross-quad shrubs. Nothing gains detail as it approaches the camera, which inverts the expected LOD gradient.",
+    "Sun and sky are non-physical. Max luminance across the entire 2.07M-pixel image is 231/255 with 0.0% of pixels above 250. A golden-hour sun near the horizon produces a clipped highlight core, bloom, and aerial godrays; here the sun is a soft radial haze added into a fog term. The sky itself is a flat pastel gradient with faint smeared wisps — no volumetric cloud layer, no light shafts, no lens dirt or flare.",
+    "Heightmap terrain with a single stretched material. The distant ridgeline shows straight polygonal facets, the slopes show vertical texture stretching, and there is no slope-based cliff/rock shader blend — the same diffuse is dragged across 60-degree faces. AAA terrain uses splat blending plus triplanar or hand-placed cliff meshes.",
+    "Visible LOD band with imposter popping quality. Around y=470-540 the 3D conifers abruptly give way to flat camera-facing yellow smudges on the mountain flank, all with identical lighting and no dithered cross-fade — an unblended discrete LOD swap.",
+    "Fauna proxy at approx (1465, 900): a crude flat cream-colored quadruped a few pixels tall, no shadow, no ground-contact shading, no material variation. It reads as an untextured placeholder rather than a shipped animal asset.",
+    "No post stack. No film grain (sky high-frequency std is 1.0, i.e. pure gradient quantization), no vignette (corner-to-center luminance falloff in the sky is absent), no chromatic aberration on high-contrast silhouettes. Every game in the reference class ships an opinionated filmic post chain."
+   ]
+  }
+ },
+ "regressions": [
+  "storm_plains: pass 1 identified this as the ONLY shot with correct positive B-R at distance and readable stacked depth layers. It is now a near-uniform white-out — the horizon line is barely detectable, the mesa/plain separation is gone, the ground twenty metres from camera is the same value as the sky, and rain streaks are drawn over the cloud layer as full-length white scratches. The fog fix was applied globally with no start distance and no height falloff, destroying the one frame that already worked.",
+  "night_camp: the campsite ground now carries a hard-edged square/diamond patch with a dead-straight boundary running diagonally across the lower-left of frame — a flatten or blend decal with no feathering. This is a new artefact and it is the most obviously synthetic edge in the entire set.",
+  "night_camp: smoke is now a solid opaque near-black cauliflower mass with a hard silhouette floating above the fire. It reads as a boulder suspended in mid-air, not smoke. Pass 1 had no smoke at all, which was less damaging than this.",
+  "high_noon_desert: a corrupt magenta/green/rainbow rectangular blob has appeared at the left edge around x=60,y=515 — a broken imposter or billboard atlas sampling garbage. Did not exist in pass 1.",
+  "player_third_person: adding the character exposed that grass card world-scale is roughly 2-3x too large. Pass 1 had no figure so the error was invisible; now the single most important scale anchor in the set is being contradicted by the ground cover directly around it.",
+  "storm_plains.png: pass 1 named this the only frame with correct depth physics (+0.083 B-R at distance, readable stacked layers). It is now a milk whiteout — 0.1st-percentile luma 0.317 (the DARKEST pixel in the entire frame is mid-grey), mean saturation 0.160, near-ground saturation 0.175. The fog has no start distance and no height falloff, so it now veils surfaces 20m from camera. The one frame that had the physics right has been tuned into the worst frame in the set.",
+  "storm_plains.png: cloud shading has inverted. Puffs render BRIGHTER than the sky behind them with hard elliptical edges and no darker bases, so the deck reads solarised — a negative image. Pass 1 flagged this on moonlit_ridge only; it has now spread to the storm deck, which is the one place a dark cloud base is the entire point of the shot.",
+  "moonlit_ridge.png / night shadows: the shadow dither noise pass 1 called out is not only unfixed, it has become chromatic. In the night sky the high-frequency residual measures 8.05 8-bit levels in GREEN against 4.34 red and 4.46 blue — nearly 2x. Neutral grain became a green speckle, which is worse than what it replaced.",
+  "golden_hour_vista.png: the upper sky has been washed out relative to pass 1. Zenith now measures saturation 0.045 / B-R +0.038 — functionally white. Whatever fog or turbidity term was added to fix the horizon is being integrated across the whole dome including the zenith, destroying the sky's colour contrast on the money shot.",
+  "night_camp fire-ring boulders got worse, not better. Pass 1 called them 'grey plastic lumps'; they are now blown-out WHITE faceted plastic lumps with visible flat quads and still zero albedo, normal or roughness variation. The added fire key light exposed the untextured surface instead of hiding it.",
+  "Aliasing surface area exploded. Pass 1 had bare terrain and little to alias. Now that alpha-tested vegetation covers most of every frame with no AA resolve, foreground per-pixel gradient p99 hit 0.933 in high_noon_desert and 0.733 in forest_interior, and 6-8% of foreground pixels in player_third_person / river_bend / dawn_mist_valley carry >0.15 single-pixel luma steps. The world is materially noisier than it was.",
+  "forest_interior gained hundreds of isolated black speckle pixels across the canopy (541 dark blobs, 489 under 7px, in a single 800x500 crop) that could not exist in pass 1 because there was no canopy. A new rendering bug shipped with the new content.",
+  "Visible tiling is a NEW defect class. Pass 1 had no buildings, so it had no facade tiling; town_street now ships a measurable 65px-period repeat on its principal wall plus a repeating street tile — a fresh §5 automatic-rejection that did not previously exist.",
+  "night_camp fire sprites now punch hard-edged BLACK cutout holes through the flame and smoke (visible as solid black polygons at the fire base and left of the tripod) — an alpha sort/blend failure introduced with the particle system."
+ ],
+ "integrationStillBroken": [
+  "AERIAL PERSPECTIVE HUE, 3 of 10 shots. Depth-binned off the depth buffer, B-R gets MORE negative with distance in golden_hour_vista (-0.028 -> -0.123), dawn_mist_valley (-0.063 -> -0.178) and forest_interior (-0.079 -> -0.147). All three look toward a low sun. I swept aerialStrength 1.35/1.9/2.5/3.2 on golden_hour and the far-field B-R barely moved (-0.133 -> -0.120), which proves the warmth is the SUN'S OWN COLOUR (at 3 deg elevation the direct beam is (1.0,0.52,0.17)) and not the haze - more haze cannot fix a far field that is directly lit orange. The sky agent's 'that is measuring sunset' defence is correct for these three. The other 7 shots pass.",
+  "ABSOLUTE B-R IS NOT POSITIVE ON DISTANT TERRAIN in most daylight shots, which is what the brief asked for. Final far-field values: river_bend +0.023 (passes), high_noon_desert -0.020, town_street -0.037. The ochre desert albedo is strongly red and transmittance at 2.5 km is still ~0.7-0.8, so the surviving albedo dominates. What IS unambiguously correct is the depth ORDERING: luma rises and saturation falls monotonically with true world distance in 10 of 10 shots (e.g. high_noon sat 0.52 -> 0.19, town_street 0.62 -> 0.08).",
+  "TREE IMPOSTOR LOD CROSS-FADE. A handful of trees mid-transition render as interleaved horizontal stripes of two LODs plus chromatic fringing - a rainbow smear. Clearly visible at ~(590,620) in golden_hour_vista and ~(75,520) in high_noon_desert. The dither cross-fade is not resolving through TAA. Left alone: it is localised to trees inside the transition band, and the forest shots currently look good, so I judged a blind fix to Vegetation's impostor path higher-risk than the artefact.",
+  "NIGHT_CAMP still reads blown and desaturated: the flame core clips to white and loses the (1.0, 0.37, 0.14) hue the light is measurably authored at. Auto-exposure meters to ~11.8 at night (uMaxExposure is 19 with a 0.05 key), pushing the fire into AgX's desaturating shoulder. Removing the horse and clearing the grass fixed the worst of it but the exposure/grade interaction at night is unresolved.",
+  "NIGHT_CAMP has a hard-edged bright SQUARE on the ground around the fire - almost certainly the 2.1 m flat ash quad in Town/Campfire.js (B.faceY at a constant Y), which neither conforms to the terrain nor fades at its edge. Not fixed; it is a merged-geometry change in Town's builder.",
+  "SAMPLER BUDGET HAS ZERO HEADROOM AT NIGHT. terrain is at exactly 16/16 units in night_camp with the fire pool resident (14 in daylight). The next system that adds one sampler to the terrain material will silently delete the entire landscape again, with no console ERROR - only a warning. This needs a permanent guard.",
+  "storm_plains and dawn_mist_valley are still very milky. They are legible and order-independent now, but the mist/rain veil is heavy: storm_plains measures B-R flat at +0.17 across every depth bin, i.e. almost no depth cue at all."
+ ]
+}

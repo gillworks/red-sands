@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>RED SANDS — An Open World Western, in the Browser</title>
+<meta name="description" content="A procedurally generated open-world western running entirely in the browser. Physical atmospheric scattering, hydraulic-eroded terrain, volumetric clouds, hunting, and a town — built with three.js and WebGL2.">
+<meta name="theme-color" content="#07060a">
+<link rel="canonical" href="https://red-sands.vercel.app/">
+
+<!-- Open Graph -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="RED SANDS">
+<meta property="og:title" content="RED SANDS — An Open World Western, in the Browser">
+<meta property="og:description" content="Ride, hunt and explore an 8km procedurally generated frontier. No downloads, no plugins — three.js and WebGL2.">
+<meta property="og:url" content="https://red-sands.vercel.app/">
+<meta property="og:image" content="https://red-sands.vercel.app/og.jpg">
+<meta property="og:image:type" content="image/jpeg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Golden-hour view across a western frontier: sandstone buttes and a mountain range receding into haze, seen over a dark treeline.">
+
+<!-- Twitter / X -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="RED SANDS — An Open World Western, in the Browser">
+<meta name="twitter:description" content="Ride, hunt and explore an 8km procedurally generated frontier. No downloads, no plugins — three.js and WebGL2.">
+<meta name="twitter:image" content="https://red-sands.vercel.app/og.jpg">
+<meta name="twitter:image:alt" content="Golden-hour view across a western frontier: sandstone buttes and a mountain range receding into haze, seen over a dark treeline.">
+
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<style>
+  html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#000;color:#e8dcc8;
+    font-family:"Times New Roman",Georgia,serif;-webkit-font-smoothing:antialiased}
+  #app{position:fixed;inset:0}
+  canvas{display:block;width:100%;height:100%;outline:none}
+  #boot{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    flex-direction:column;gap:18px;background:#07060a;z-index:100;transition:opacity 1.2s ease}
+  #boot.gone{opacity:0;pointer-events:none}
+  #boot h1{font-size:clamp(28px,6vw,64px);letter-spacing:.34em;margin:0;font-weight:400;
+    color:#d8c39a;text-shadow:0 0 40px rgba(200,150,70,.35)}
+  #boot .sub{letter-spacing:.5em;font-size:11px;color:#6b6255;text-transform:uppercase}
+  #bar{width:min(420px,60vw);height:1px;background:#241f1a;position:relative;overflow:hidden}
+  #bar i{position:absolute;inset:0 100% 0 0;background:linear-gradient(90deg,#7a5a28,#e0c184);
+    transition:right .35s ease}
+  #boot .task{font-size:11px;letter-spacing:.22em;color:#5c554a;text-transform:uppercase;height:1em}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="boot">
+  <div class="sub">An Open World</div>
+  <h1>RED SANDS</h1>
+  <div id="bar"><i id="barfill"></i></div>
+  <div class="task" id="boottask">initialising</div>
+</div>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,272 @@
+{
+ "sky": [
+  {
+   "shot": "golden_hour_vista",
+   "impact": "critical",
+   "problem": "Three separate sun discs are rendered across the sky — one at x≈600, one at x≈1310 (the bright one), one at x≈1570. river_bend has four (x≈195, 405, 460, 560, 835). This is a sun-disc or bloom-sprite pass being drawn once per something (per cascade, per cloud layer, per reflection probe) instead of once, or a skydome UV that wraps the disc term.",
+   "fix": "The sun disc must be a single analytic term evaluated as smoothstep on dot(viewDir, sunDirection) inside the sky shader, drawn exactly once — not a billboard sprite and not evaluated in any pass that repeats. Audit every draw that samples sunDirection and confirm the disc/limb-darkening term is gated to the single sky fullscreen pass. Any flare sprite in Bloom.js must be clipped to one instance at the projected sun position with an occlusion test."
+  },
+  {
+   "shot": "high_noon_desert.png",
+   "impact": "critical",
+   "problem": "The sky is a monotonic near-linear vertical lerp that terminates in a WARM YELLOW horizon: sampling a column away from the sun, red climbs 0.358 to 0.592 (+0.234) while blue climbs only 0.525 to 0.645 (+0.120), so B-R collapses from +0.167 at zenith to +0.052 near the horizon and the horizon band measures hue 58deg at saturation 0.088. A midday horizon must be pale BLUE-white from Mie forward scatter, never yellow. This one defect also poisons the fog, which samples the horizon colour.",
+   "fix": "Replace the two-colour vertical lerp with an analytic Preetham or Hosek-Wilkie sky, or at minimum a Rayleigh+Mie single-scatter integral evaluated per-pixel against the view ray: Rayleigh phase with beta_R = (5.8e-6, 13.5e-6, 33.1e-6) per metre and Mie beta_M = 21e-6 with Henyey-Greenstein g = 0.76. That gives you a blue-dominant zenith, a desaturated pale-blue horizon, and a warm Mie lobe that appears ONLY within about 30deg of the sun rather than smeared around the entire horizon ring. Drive turbidity from ctx.env.turbidity so weather can thicken it."
+  },
+  {
+   "shot": "river_bend.png",
+   "impact": "critical",
+   "problem": "Aerial perspective is chromatically inverted. Distant terrain measures R=0.674 G=0.630 B=0.581 — B minus R is -0.094, so the ridge at several kilometres is WARMER than the foreground. Same failure in town_street (-0.106), player_third_person (-0.123), high_noon_desert (-0.086), forest_interior (-0.050). The distance fade is a single-colour lerp toward the (wrongly warm) horizon tint instead of wavelength-dependent in-scatter, so depth reads as dust rather than air and the whole world looks like a tabletop diorama.",
+   "fix": "Drop the mix(colour, fogColor, f) and compute per-channel extinction and in-scatter: transmittance = exp(-beta_extinction * distance) evaluated separately for R, G and B using Rayleigh coefficients that are roughly 5.7x stronger in blue than red, then add inscatter = skyLuminance * (1 - transmittance) using the same per-channel betas. Blue then saturates toward the sky colour far sooner than red, which is what makes ridges stack bluer with depth. Add a height falloff term exp(-(y - fogBaseY)/H) with H around 400m so valleys hold more haze than peaks — that is what produces the discrete stacked layers the brief asks for."
+  },
+  {
+   "shot": "golden_hour_vista.png",
+   "impact": "critical",
+   "problem": "There are THREE sun discs in the sky. Connected-component analysis of pixels above 0.965 luma finds blobs centred at x=1311 y=235 (9298 px, peak 0.995), x=1590 y=244 (732 px, peak 0.994) and x=601 y=278 (1265 px, peak 0.994). Two of the three are duplicates. On the hero golden-hour shot this is a shipping-blocker bug, not an art note.",
+   "fix": "Almost certainly the sun disc is being drawn into the cloud or sky billboard layer per-cloud-cell (or the bloom/god-ray pass is running with a mirrored or wrapped UV lookup so the sun sprite repeats across the atmosphere dome seam). Render the sun exactly once as a screen-space disc of about 0.53deg angular diameter with limb darkening, composited after the sky and before the tonemap, and clamp the god-ray radial-blur source to sun-facing pixels only via a dot(viewDir, sunDir) mask so it cannot spawn secondary sources. Verify by counting bright components in the capture harness as a regression assertion."
+  },
+  {
+   "shot": "high_noon_desert.png",
+   "impact": "high",
+   "problem": "Local contrast increases with distance instead of decreasing. The far mesa has a local luma std of 0.078 while the near ground measures 0.031. golden_hour_vista is worse: far ridge 0.117 against near plain 0.028. Aerial perspective must compress the tonal range of distant objects toward the sky value; here it is expanding it, so the far mesas punch forward and the image has no depth ordering at all.",
+   "fix": "This is the same missing extinction term as the fog finding but seen tonally rather than chromatically. Once transmittance = exp(-beta * d) multiplies the surface radiance and in-scatter adds a distance-proportional flat pedestal, distant contrast compresses automatically — that pedestal is exactly what lifts far-field blacks toward the sky. Separately, verify the terrain is not switching to a lower-frequency LOD that RAISES apparent contrast: the near ground looks pre-blurred, which suggests either an over-aggressive mip bias or the detail-normal fading out too close to camera. Push the detail normal fade to 60-80m and add anisotropic filtering at 16x on the terrain albedo."
+  },
+  {
+   "shot": "moonlit_ridge.png",
+   "impact": "medium",
+   "problem": "The night sky has no atmospheric response to the moon: the moon is a hard disc against a near-flat dark field with no glow halo, no Mie corona and no gradient falloff, and there is no Milky Way band despite night_camp being specced for one. Both night shots also carry heavy visible dither noise in the shadows, and the entire moonlit_ridge frame is compressed into a narrow band with a 1st-percentile luma of 0.061 and a 99th of 0.554 — no far ridge separates from the near one, so there is zero aerial perspective at night either.",
+   "fix": "Run the same Rayleigh+Mie integral for the moon that you run for the sun, at roughly 1/400,000 the intensity with a cool (0.72, 0.80, 1.0) tint — that gives you the halo and the horizon airglow for free from code you already need. Add a Milky Way as a procedural band: fbm-modulated star density plus a dust-lane mask rotated to the galactic plane, at low intensity so the tonemap does not eat it. For the noise, the dither amplitude is tuned for mid-tones and is far too strong in the low end — scale grain by roughly sqrt(luma) so it vanishes in the shadows instead of dominating them, and apply it after the tonemap in display space. Then run the same per-channel distance extinction at night with a night-tinted in-scatter so the far ridge separates from the near one."
+  }
+ ],
+ "town": [
+  {
+   "shot": "town_street",
+   "impact": "critical",
+   "problem": "There is no town. The shot named 'Main street of the settlement, buildings, props, warm afternoon' is an empty grass field with a mountain range. Not one building, fence, water trough, boardwalk or wagon.",
+   "fix": "Town.js is registered at priority 50 and contributing zero draw calls. It needs to actually emit geometry: a street spine placed on flattened terrain, 8-14 facade masses with varied ridge heights and roof pitches, boardwalk + posts, and — critically for silhouette — the vertical elements (telegraph poles, false-front parapets, a water tower) that break the horizon line. Merge static geo per material and instance the repeated props with per-instance yaw/scale jitter so nothing sits on a grid."
+  }
+ ],
+ "vegetation": [
+  {
+   "shot": "forest_interior",
+   "impact": "critical",
+   "problem": "There is no forest. The shot named 'Inside the treeline, dappled light through canopy, undergrowth' is an open grass bowl between two bare brown hills. Zero trees, zero undergrowth, zero canopy, and therefore zero dappled light.",
+   "fix": "Vegetation.js is emitting nothing. Minimum viable: instanced trunk cylinders with bark_pine + 3-4 cross-quad canopy cards per tree using leaves_atlas with alpha-test, distributed by a Poisson-disc/blue-noise sampler weighted against ctx.world.getSurface and getSlope, LOD'd to a single camera-facing billboard beyond ~120m. Then requestShadowCaster the canopy so the ground actually receives the dappled break-up the shot is named for — the shadow is the shot, not the trees."
+  },
+  {
+   "shot": "town_street",
+   "impact": "high",
+   "problem": "Grass is a flat painted texture on the heightfield — a uniform mid-green carpet with no geometry, no blade silhouette, no parallax, and no wind. It reads as a golf course, and it is the same flat carpet in river_bend, player_third_person and forest_interior. §5 explicitly bans 'saturated cartoon green grass'; the hue here is also too green and not yellow-shifted.",
+   "fix": "Instanced grass card clusters in a camera-following ring out to ~40m, alpha-tested, with per-instance colour jitter and a vertex-shader wind sway driven by ctx.env.windVector/windGust. Fade the instances out into the painted texture at the ring boundary rather than popping. Shift the base albedo toward yellow-ochre and desaturate roughly 30%. The silhouette of individual blades against the ground is what makes grass read as grass — no texture can do it."
+  },
+  {
+   "shot": "forest_interior",
+   "impact": "critical",
+   "problem": "Named 'forest_interior' and there is not one tree, shrub, or blade of grass in frame. Same for town_street (no buildings), player_third_person (no character), river_bend (no water). Draw calls are 48-56 with 7-9 geometries across all shots — the vegetation, scatter, town and player systems are contributing literally nothing to the frame. Detail density at the scale a player's eye lands on is zero everywhere.",
+   "fix": "Vegetation needs to actually emit InstancedMesh batches: cross-quad grass cards on a density map derived from ctx.world.getSurface, with per-instance colour/scale/rotation jitter, out to ~35m, then a billboard-imposter band to ~120m. Scatter needs boulder/deadfall/scrub instancing keyed to slope and surface weights. Nothing else in this review matters if the ground stays bare."
+  }
+ ],
+ "water": [
+  {
+   "shot": "river_bend",
+   "impact": "critical",
+   "problem": "There is no river. The shot named 'Water surface, reflections, refraction, foam at the bank' is an unbroken green field with a single ~30px orange/blue prop blob in the midground. Meanwhile high_noon_desert renders water as flat pure-white cutouts lying on the sand with a hard aliased boundary and no shoreline transition at all.",
+   "fix": "Water.js needs to bind to the hydrology output that already exists (Hydrology.js / T.getFlowMap()) and carve+fill a channel rather than stamping horizontal planes at waterLevel. For the surface: screen-space refraction from the opaque colour buffer, Fresnel-weighted SSR against P.depthTexture, and depth-based absorption tint so shallow reads sandy and deep reads dark. At the bank, use the depth delta between water surface and terrain to drive both a wet-darkening band on the terrain material and a foam mask — that single soft depth-fade edge is what kills the cutout look in high_noon_desert."
+  },
+  {
+   "shot": "high_noon_desert",
+   "impact": "high",
+   "problem": "The water pools are flat light-blue sheets with a hard, aliased shoreline cut straight across the sand. No shallow-depth colour gradient, no wet-sand darkening at the margin, no foam line, no refraction, no visible normal animation. It reads as blue paper laid on the ground.",
+   "fix": "Read postfx.depthTexture, compute water depth as (sceneDepth - waterDepth), and drive both an alpha fade and a Beer-Lambert absorption ramp from it so the edge feathers out. Feed a wetness term back to the terrain via terrain.registerMaterialUser to darken albedo and drop roughness in a band around the waterline. Add a scrolling dual-normal for surface break-up."
+  }
+ ],
+ "player": [
+  {
+   "shot": "player_third_person",
+   "impact": "critical",
+   "problem": "The shot named 'Over-the-shoulder gameplay framing with the character and horse' contains neither a character nor a horse. It is an empty pasture. There is nothing in frame to establish human scale, so the terrain could be 8km or 80m across and the viewer cannot tell.",
+   "fix": "Player.js/Horse.js must render at the POI. Beyond fixing the bind, this is the single cheapest scale fix in the whole set: one 1.8m-tall figure with a contact shadow anchors every other dimension in the image. Ensure the contact/AO shadow under the feet and hooves is present — a character without ground contact floats and destroys the scale it was meant to establish."
+  }
+ ],
+ "postfx": [
+  {
+   "shot": "golden_hour_vista",
+   "impact": "critical",
+   "problem": "No aerial perspective. The mountain range, the midground ridges and the foreground all sit at the same contrast and near the same value — the far peaks are, if anything, slightly brighter and more saturated than the midground. §5 calls this out as the single most important thing and the exact rejection criterion. Same failure in forest_interior (foreground and background hills identical in tone), moonlit_ridge (near ridge = far ridge), town_street.",
+   "fix": "Apply proper depth-based atmospheric scattering in the composite: extinction exp(-distance/scaleHeight) toward an inscatter colour sampled from the sky in the view direction, with Rayleigh and Mie separated so the inscatter shifts blue away from the sun and warm-white within ~20° of it. Then add height falloff so valleys pool more haze than ridgetops — that is what generates the discrete stacked layers §5 asks for. Verify by checking that the far range's local contrast is measurably lower and its hue measurably bluer than the midground; right now it is not."
+  },
+  {
+   "shot": "dawn_mist_valley",
+   "impact": "medium",
+   "problem": "The grade is doing nothing §5 asks for. Blacks are not lifted or cool-tinted (dawn_mist_valley's lower frame is a crushed flat olive), highlights are not rolling off (night_camp's fire clips to pure white, high_noon_desert's sky is close), there is no grain, no halation around the sun, no chromatic aberration at the edges. Every frame reads clean, digital and video-gamey rather than photochemical.",
+   "fix": "In Grade.js: apply a proper filmic curve (ACES or a Hable-style shoulder) with an explicit black lift of ~0.02 tinted toward cool slate, and a long highlight shoulder. Add halation by blurring only the >1.0 luminance region and compositing it back weighted toward red, which is what gives the sun its film bloom. Add fine animated grain scaled by inverse luminance so shadows are grainier than highlights, and a subtle radial chromatic aberration that is zero at centre and ramps only in the outer 20% of frame. Cheap, entirely post-process, and it lifts every one of the ten frames at once."
+  },
+  {
+   "shot": "golden_hour_vista.png",
+   "impact": "high",
+   "problem": "The foreground plain sits at 0.156 luma with saturation 0.312 while the sun is visibly above the horizon in frame. The near ground is falling into near-blackness with no skylight fill and no ground bounce, so the shot loses its entire foreground plane and the composition becomes a bright ridge floating over a dark void. The image median is 0.309 — the darkest of any daylight shot in the set.",
+   "fix": "Symptom of the missing two-lobe ambient above, plus an exposure that is metering to the sky. Drive postfx exposure from a histogram-weighted average that excludes the top 20% of the frame (the sky), targeting a mid-grey of about 0.18 on the ground plane, and clamp the adaptation range so it cannot chase the sun disc. Then add the warm ochre bounce fill so the shadowed foreground lands around 0.10-0.14 linear rather than 0.02 — golden hour foregrounds are dark but they are dark and WARM and full of colour, not dark and empty."
+  }
+ ],
+ "terrain": [
+  {
+   "shot": "forest_interior",
+   "impact": "critical",
+   "problem": "Terrain has no hard edges anywhere in any of the ten shots. Every surface is smooth C1 noise — rounded sine hills, uniform slopes, no cliff faces, no bedrock outcrop, no boulders, no talus, no incised drainage. §5 explicitly bans 'uniform slopes and repeating shapes'. This is why silhouettes are boring in every frame and why nothing reads as rock.",
+   "fix": "Two things, in order. (1) In the heightfield, run a proper hydraulic+thermal erosion pass (Erosion.js exists — it is either not running or its output is being smoothed away): thermal erosion at a ~35° talus angle produces the flat-topped scarps and scree cones that give a western range its silhouette, and hydraulic erosion cuts the V-notch drainages that make a ridge read as eroded rock rather than a noise field. (2) Layer instanced boulder and outcrop meshes onto high-slope areas via Scatter.js so the silhouette gets sub-heightfield detail the mesh resolution can never provide."
+  },
+  {
+   "shot": "high_noon_desert",
+   "impact": "high",
+   "problem": "The mesas are painted in hard horizontal contour bands — visibly quantised elevation stripes running level across every butte, with the same banding on the ranges in town_street, golden_hour_vista and river_bend. This is an altitude-driven splat blend with too few steps and no noise on the boundary, and it makes the geology read as a topographic map rather than rock.",
+   "fix": "Break the height threshold with a triplanar fBm offset before the smoothstep — perturb the sampling altitude by a multi-octave noise at ~5-30m wavelength so the strata boundary wanders and interlocks instead of running level. Drive the blend with a height-map-based blend (compare per-layer displacement values, pick the max) rather than a linear lerp, which gives rock layers interlocking edges. Also add slope-dependent weighting so vertical faces expose rock_cliff and ledges accumulate dirt_dry."
+  },
+  {
+   "shot": "moonlit_ridge",
+   "impact": "medium",
+   "problem": "Visible LOD/tessellation artefacts. The foreground has diagonal striated stepping running across the slope (mesh-resolution quantisation in the normals), and on the right edge a hard flat-topped geometric plateau with a straight vertical face cuts in — a broken LOD skirt or a clamped chunk boundary. In storm_plains the same flat-topped clipped mesas appear along the horizon.",
+   "fix": "For the striations, compute normals analytically from the heightfield gradient rather than from the tessellated mesh faces, so normal detail is independent of mesh LOD. For the plateau, clamp or fade the heightfield toward the world edge with a smooth falloff instead of a hard cut, and verify chunk skirts are stitched with matching edge vertices between LOD levels — a straight vertical wall at a chunk boundary is a stitching failure, not a design choice."
+  },
+  {
+   "shot": "river_bend",
+   "impact": "critical",
+   "problem": "The grass ground plane has a single albedo value with a fixed-period directional comb-streak running through it. At 2x zoom the same streak motif repeats horizontally roughly every 60-80px across the entire midground and the hue never deviates. There is no macro variation at all — no dry patches, no soil showing, no wear paths, no clumping. The whole 300m of visible ground is one flat green field of noise.",
+   "fix": "Multiply the splat result by a low-frequency colour-breakup map: two octaves of fBm at ~40m and ~150m world scale, remapped to 0.75-1.25 luminance and a +/-8% hue rotation toward ochre, sampled by world XZ so it does not swim with the detail UVs. This is a dozen lines in the terrain fragment shader and it is the single highest-value change in the whole review."
+  },
+  {
+   "shot": "forest_interior",
+   "impact": "critical",
+   "problem": "Every hill slope shows hard horizontal contour bands — discrete stripes of lighter/darker brown stepping at regular elevation intervals, exactly like a topographic map. This is a height-thresholded material blend with no jitter, and it reads as a rendering bug, not geology. It is the most visible artifact in the shot after the missing trees.",
+   "fix": "Perturb the height input to every splat threshold with a 3D noise offset before the smoothstep — `h += noise(worldXZ * 0.08) * bandWidth * 1.5` — and widen the smoothstep transition. Additionally drive the blend by slope and curvature, not elevation alone, so strata follow the terrain form instead of horizontal planes."
+  },
+  {
+   "shot": "high_noon_desert",
+   "impact": "high",
+   "problem": "The sand shows a strong repeating dune-comb pattern at one fixed frequency across the whole plain, and the mesa faces show vertical fan-streaks radiating down the slopes — classic triplanar Y-projection stretch where the top-down plane is being smeared down near-vertical faces. Both are visible tiling, which §5 lists as an automatic rejection.",
+   "fix": "Two fixes. (a) Stochastic/hex tiling: sample the detail texture three times at hash-offset UVs per triangular region of a hex grid and blend by barycentric weight — kills the periodic repeat outright. (b) Fix the triplanar blend weights: raise the blend exponent to ~6-8 and normalize, so the XZ plane stops leaking onto vertical rock; use the per-axis projection with the correct world scale on each."
+  },
+  {
+   "shot": "golden_hour_vista",
+   "impact": "high",
+   "problem": "Every mountain silhouette stair-steps in hard pixel staircases against the sky, and the ridgeline shading shows blocky quantization terracing — flat facets stepping in discrete elevation increments rather than smooth erosion. The height data appears to be quantized (8-bit canvas readback) and there is no antialiasing resolve on the silhouette edges.",
+   "fix": "Store the heightfield as Float32 (or RGBA-packed 32-bit if it must round-trip a canvas) and recompute normals analytically from the float data with a central-difference kernel rather than from the quantized texels. Then enable a TAA resolve (you already have postfx.velocityBuffer, so a jittered-projection TAA is essentially free) or at minimum an FXAA/SMAA pass."
+  },
+  {
+   "shot": "golden_hour_vista",
+   "impact": "high",
+   "problem": "The mountains have no rock at all. At 2x zoom the entire range is a soft brown blur with no strata, no cliff faces, no talus cones at the slope base, no exposed bedrock at ridge breaks. Geologically it reads as a pile of sand, not eroded rock. The only structure is the shadowing from the heightfield itself.",
+   "fix": "Slope-driven rock splat: where slope exceeds ~35 degrees, blend in rock_cliff with strata banding generated in the shader from a world-Y sine modulated by noise, and drop scree/gravel at the slope-to-flat transition (curvature < 0). Add a detail normal at ~1m scale on the rock layer so the cliff faces catch a specular break under the low sun."
+  },
+  {
+   "shot": "dawn_mist_valley",
+   "impact": "medium",
+   "problem": "The ground detail is one texture at one UV scale. In the near field it resolves as a fine dither that will shimmer under camera motion; in the midground it collapses to flat mush by ~80m. There is no detail at the decimetre scale where the player's eye actually lands, and nothing at the millimetre scale at all — §5 asks for metres, decimetres and millimetres and you have roughly one of the three.",
+   "fix": "Layer three detail tilings multiplied together at ~16m, ~2m and ~0.25m world scale with descending contrast, and cross-fade the finest layer out by camera distance to prevent aliasing. Add a detail normal map on the 0.25m layer only, faded in over the first 8m, so near-camera ground has real micro-relief."
+  },
+  {
+   "shot": "storm_plains",
+   "impact": "medium",
+   "problem": "Under the storm grade the ground degenerates into salt-and-pepper dither blotches — the detail albedo is high-contrast per-texel noise with no spatial coherence, so once the macro lighting flattens there is nothing left but visual static. It also means anisotropic filtering is either off or the mip chain is being generated from unfiltered noise.",
+   "fix": "Generate the detail albedo from band-limited fBm rather than white noise, set aniso to 16 on the terrain maps, and ensure generateMipmaps runs on a properly low-pass-filtered source. Also add a wetness darkening + roughness drop driven by ctx.env.wetness so the storm ground reads as saturated soil instead of grey noise."
+  },
+  {
+   "shot": "town_street.png",
+   "impact": "high",
+   "problem": "The distant mountains carry hard horizontal contour banding. Sampling luma down the ridge face gives 0.803, 0.724, 0.689, 0.635, 0.616, 0.589, then back UP to 0.609 and 0.592 — the value steps are non-monotonic, so this is quantised terracing from a height-driven colour ramp with too few stops, not real strata. Visible in player_third_person and golden_hour_vista as well. It reads as a topographic map, not rock.",
+   "fix": "The height-to-albedo lookup is being sampled from a low-resolution 1D ramp texture with nearest or low-bit-depth filtering. Move it to an RGBA16F ramp with linear filtering, then break the remaining banding by perturbing the lookup coordinate with fbm noise before the sample — height + noise2D(x*0.02, z*0.02) * 12.0 — so the strata undulate with the rock instead of running dead level across the whole range. Add a triplanar slope mask so steep faces get rock_cliff regardless of altitude, which kills the horizontal reading entirely."
+  },
+  {
+   "shot": "river_bend.png",
+   "impact": "high",
+   "problem": "The grassland is chromatically closer than it looks (hue 64-65deg is correctly yellow-shifted) but it is over-saturated at 0.43 where dry western grassland wants 0.15-0.25, and it is completely macro-uniform: local luma std is 0.012 in the midground and 0.018 in the foreground across what must be a kilometre of frame. Zero cloud shadows, zero soil variation, zero grazing or drainage patterning. That flat uniformity is what makes it read as golf course rather than the saturation alone. forest_interior and town_street share it.",
+   "fix": "Two multiplies on the splat result. First, desaturate: pull the grass albedo toward its own luminance by about 40% and bias the remaining chroma toward 55-60deg hue for the sun-bleached areas. Second, and this is the bigger win, multiply in a low-frequency colour breakup map — two octaves of fbm at 300m and 80m wavelength, remapped to roughly 0.75-1.15 luminance and a small hue jitter — so the plain gets metre-to-hectare-scale variation. Then project animated cloud shadows: sample the cloud system's coverage texture along the sun vector at the world position of each terrain pixel and multiply the direct term by it. Drifting cloud shadows across an empty plain are the single cheapest way to make a landscape feel real, and you already have the cloud data."
+  }
+ ],
+ "lighting": [
+  {
+   "shot": "night_camp",
+   "impact": "high",
+   "problem": "The campfire is a solid blown-out white blob. The logs are white-clipped boxy prisms with visible flat facets and hard polygonal edges; the surrounding rocks are ~12-face lumps with faceted normals. There is no flame, no ember, no smoke, no light falloff shaping — just a radiometric white disc on the sand. There is also no camp: no tent, no bedroll, no pot, no character. §5 bans 'never blown out' explicitly.",
+   "fix": "Clamp the fire's emissive so the core sits inside the filmic shoulder rather than clipping to 1.0 — the tonemap should roll it off, not saturate it. Replace the emissive geometry with 3-5 soft additive flame billboards on a scrolling noise UV, plus PT.emitter('embers') and PT.emitter('smoke') soft-particle-faded against P.depthTexture. The point light needs flicker via L.addLight({flicker}) and inverse-square falloff so the sand gradient reads as light rather than a painted circle. Subdivide+displace the rock meshes and use smooth normals — those facets are the most obviously 'untextured primitive' thing in the whole set."
+  },
+  {
+   "shot": "golden_hour_vista",
+   "impact": "high",
+   "problem": "Nothing in any shot casts a shadow onto anything else. The only dark areas are terrain self-shading, which is soft, blobby and low-contrast — in golden_hour_vista the 'long shadows' the shot is named for do not exist. At the stated hour the shadows should be raking across the frame at extreme length and doing most of the compositional work. Shadow terminators are also mushy across the board, suggesting the cascade resolution or the sun's angular size is wrong.",
+   "fix": "CascadedShadowMaps.js needs verifying end to end: confirm the near cascade is actually tight around the camera, that objects are opted in via L.requestShadowCaster, and that the cascade split lambda is not putting the whole world in one blurry far cascade. Use PCSS or a small PCF kernel scaled by the sun's real angular diameter (~0.53°) so the penumbra widens with occluder distance — that gives the 'genuinely soft penumbrae' §5 asks for while keeping contact points sharp."
+  },
+  {
+   "shot": "night_camp.png",
+   "impact": "critical",
+   "problem": "The campfire core measures RGB (0.838, 0.872, 0.860) at saturation 0.071 — the GREEN channel is the strongest and the fire has essentially zero hue. It reads as a colourless white blob, not flame. The light pool on the ground is a perfect uncontrolled radial, and the three boulders sitting directly in front of the fire cast NO shadow whatsoever: the ground immediately behind them is exactly as bright as the ground beside them.",
+   "fix": "Two separate fixes. (1) The emissive is being driven so far above the tonemap shoulder that all three channels converge on white. Author the flame emissive in linear radiance at a blackbody temperature around 1800-2000K — roughly (1.0, 0.42, 0.10) normalised — and scale INTENSITY not colour, then let the filmic shoulder desaturate only the innermost few pixels while the surrounding bloom stays orange. Use a chromatic bloom kernel (wider radius on red than blue) so the halo warms rather than whitens. (2) Register the fire through lighting.addLight with a shadow-casting point light and call requestShadowCaster on the boulders; a single 512px cube shadow at 20m range is cheap and will do more for this shot than anything else. Add three or four volumetric light shafts by raymarching ctx.get('postfx').depthTexture against the fire position — a campfire at night is the one place cheap volumetrics pay for themselves."
+  },
+  {
+   "shot": "forest_interior.png",
+   "impact": "high",
+   "problem": "There is no readable directional key light anywhere in the daylight set. In forest_interior the sun direction cannot be inferred from the image at all — the dark patches on the hills are albedo noise blobs, not shadows, and they read as smudged dirt. high_noon_desert has no shadow contrast in the mesa gullies and no ambient occlusion in the terrain creases. Nothing in ten shots casts a soft penumbra.",
+   "fix": "Get the CSM working and visible. Four cascades at 0.1/25/120/600m with PCF or PCSS filtering — PCSS specifically, because the brief demands genuinely soft penumbrae and a fixed-radius PCF gives you the hard-edged shadows listed as a rejection criterion. Then split the ambient into a proper two-lobe fill instead of a constant: a cool sky term modulated by the upward-facing component of the normal (roughly (0.35, 0.45, 0.65) tinted), and a warm ochre bounce term on the downward component (roughly (0.45, 0.33, 0.20)) sampled from the ground albedo. Add screen-space AO or at minimum a terrain-curvature-derived AO term baked from the heightfield so creases darken. This is what makes shadows read cool while sunlight stays warm."
+  }
+ ],
+ "weather": [
+  {
+   "shot": "storm_plains",
+   "impact": "high",
+   "problem": "The shot named 'Heavy rain, wet ground, dark towering cloud, wind-lashed grass' has no rain streaks, no puddles, no wet specular, no lightning, no wind, and no towering cloud. The ground is a uniform desaturated grey-blue slab with zero specular response. The cloud layer is a flat 2D noise ceiling with no vertical structure — it reads as a painted lid, not weather.",
+   "fix": "Rain: PT.emitter('rain') with velocity-stretched streaks plus a screen-space drip layer. Wet ground: drive the terrain material's roughness down and albedo darker via ctx.env.wetness through T.registerMaterialUser, and add puddle masks in terrain concavities using the flow-accumulation map — the wet specular sheen is what sells rain far more than the streaks do. Clouds: the storm cell needs raymarched vertical extent with an anvil, not a flat layer — even a low-step march through 3D worley/perlin with Beer-Lambert extinction and a strong silver-lining forward-scatter term would transform this frame."
+  },
+  {
+   "shot": "dawn_mist_valley",
+   "impact": "high",
+   "problem": "The shot named 'Cold blue dawn, ground mist in the low ground' has no mist and is not cold or blue — it is a warm yellow-white wash over a featureless dark-olive plane, with the entire lower two-thirds of frame a single flat value. There is no low-lying fog in the valleys, which is the one element that would have made the terrain's shape readable.",
+   "fix": "Add height-based volumetric fog: exponential density in world Y with a low scale height so it pools in the valleys and leaves ridges clear, raymarched against P.depthTexture with a Henyey-Greenstein phase function so it lights up toward the low sun. Sample the sun shadow map along the march for godrays through the mist. This one effect turns a flat plane into readable layered topography and is the highest-value single addition to this shot."
+  },
+  {
+   "shot": "storm_plains.png",
+   "impact": "medium",
+   "problem": "This is the best shot in the set — the only one where B-R at distance is positive (+0.083) and the only one that stacks readable depth layers — but the fog is destroying near-field colour. Mean saturation across the whole frame is 0.094, roughly a third of every other shot, and the ground twenty metres in front of the camera is neutral grey. The fog is being applied with no near-plane falloff and no height gradient, so it desaturates surfaces that should still be at full chroma. Real storm light keeps warm ochre in the near ground under a cold sky — that contrast is the entire drama of the shot.",
+   "fix": "Add a start distance to the extinction (no in-scatter below about 30m) and a height falloff exp(-(y - baseY)/H) with H around 250m so the haze pools in the low ground and thins where the camera stands. Separately, the storm sky is isotropically lit with no dark cloud bases and no rain shaft — add a strong vertical density gradient to the cloud deck and a couple of raymarched precipitation shafts anchored to the darkest cells. Given this shot already has the right physics, tuning it is the cheapest route to one genuinely good frame."
+  }
+ ],
+ "clouds": [
+  {
+   "shot": "town_street",
+   "impact": "medium",
+   "problem": "Cloud sprites are low-resolution blurry blobs with visible internal banding and hard elliptical edges, tiled at similar sizes across the sky. In town_street a dozen near-identical puffs repeat at the same scale; in moonlit_ridge the clouds are dark blobs with hard white rims. They read as a 512px sprite sheet, and §5 bans 'repeating identical props' and 'tiling you can see'.",
+   "fix": "Move to raymarched volumetric clouds — 3D worley-perlin density, Beer-Lambert extinction with a Henyey-Greenstein forward-scatter term for the silver lining, and a cheap multi-scatter approximation for the bright interiors. If the frame budget will not take it (frameMs is already 13-15 at ultra), at minimum raise sprite resolution, add per-sprite rotation, scale and density variance, and impose a coverage map so clouds cluster and clear rather than distributing evenly."
+  },
+  {
+   "shot": "town_street.png",
+   "impact": "medium",
+   "problem": "The clouds are flat single-value sprites with blocky, stair-stepped alpha edges and no internal shading. They have no darker bases, no silver lining, no self-shadowing and no forward-scatter hotspot near the sun. In forest_interior they blow to near-flat white with no gradient into the shadowed underside; in moonlit_ridge the shading appears inverted, with dark cores and hot clipped rims that read as solarisation rather than moonlit silvering.",
+   "fix": "Raymarch the cloud volume rather than compositing textured billboards: 32-64 steps through a worley-fbm density field, with 4-6 secondary steps toward the sun for self-shadowing, using Beer-Powder (exp(-d) * (1 - exp(-2d))) for the extinction so bases go dark while edges keep the powder-sugar bright rim. Apply a dual-lobe Henyey-Greenstein phase (g = 0.8 forward, g = -0.3 back, blended) so clouds near the sun glow and clouds away from it read as solid form. If the full march is too expensive at ultra, render it at quarter resolution into a buffer and upsample with a depth-aware bilateral filter — the silhouettes are soft enough that nobody will see it. The blocky edges specifically are a low-resolution alpha texture being upsampled with point filtering; that is a one-line fix regardless."
+  }
+ ],
+ "scatter": [
+  {
+   "shot": "high_noon_desert",
+   "impact": "high",
+   "problem": "There is no midground. Every shot cuts straight from a large flat foreground to a distant range with nothing in between — no rocks, no scrub, no fence line, no trail, no wildlife, no ruin. This is the specific reason the world reads as small: with nothing at 50-500m, the eye has no stepping stones to measure the distance to the horizon, so the far range collapses onto the foreground and the whole thing becomes a diorama.",
+   "fix": "This is Scatter.js's job and it is producing nothing. Populate the 20-400m band with instanced variety — boulders, dead logs, scrub bushes, yucca, cactus, bleached bone, a wagon-rut trail — distributed by clustered noise rather than uniform density so there are thickets and clearings. Vary instance scale over at least a 3x range and jitter yaw per instance. Overlapping silhouettes at varied distances is the mechanism that generates depth; haze alone will not do it without objects to stack."
+  },
+  {
+   "shot": "night_camp",
+   "impact": "high",
+   "problem": "The fire-ring boulders are untextured flat-shaded polygon lumps. Hard faceted silhouettes, visible flat quads, no albedo variation, no normal map, no roughness break-up, no dirt in the crevices. They are the closest objects to camera in any shot in the set and they read as grey plastic. The logs are pure blown-out white geometry with no wood grain at all.",
+   "fix": "These meshes are clearly not getting a procTextures material — bind rock_boulder via t.material('rock_boulder') with triplanar world-space UVs so no unwrap is needed, and wood_weathered on the logs. Add a curvature-based AO/dirt term (cavity from the normal map) and subdivide + noise-displace the boulder geometry so the silhouette is not a 20-face lump."
+  }
+ ],
+ "procTextures": [
+  {
+   "shot": "forest_interior",
+   "impact": "high",
+   "problem": "The grass is saturated mid-green — near emerald in the foreground. §5 explicitly demands 'desaturated and yellow-shifted, never emerald' and lists 'saturated cartoon green grass' as a rejection criterion. river_bend and player_third_person have the same problem. This is a five-minute fix that removes an explicit rejection.",
+   "fix": "Rebalance the grass_prairie and grass_dry albedo generation: pull saturation down ~40%, shift hue about 15 degrees toward yellow, and lift the value slightly so it reads sun-bleached. Then blend grass_dry over grass_prairie with the macro breakup mask from finding 1 so the field is a mix of sage and straw, not one green."
+  },
+  {
+   "shot": "player_third_person",
+   "impact": "medium",
+   "problem": "There is no edge wear, dirt accumulation, or sun-bleaching anywhere in the frame. §5 calls for dirt in crevices and bleaching on up-facing planes as a baseline requirement of surface honesty, and every surface in every shot is uniformly lit and uniformly dirty. Nothing looks weathered by anything.",
+   "fix": "Add two cheap shader terms to the shared terrain/prop material: a cavity term from the normal map's second derivative that darkens and desaturates crevices, and an up-facing term (dot(N, up) raised to a power) that lifts value and pulls saturation toward bleached ochre. Both are a handful of instructions and apply to every material in the game at once."
+  }
+ ]
+}
