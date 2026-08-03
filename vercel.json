@@ -8,14 +8,12 @@
   "trailingSlash": false,
   "headers": [
     {
-      "comment": "Vite fingerprints every file in /assets, so they can be cached forever. This is the whole ~600KB gzip payload, served once.",
       "source": "/assets/(.*)",
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
       ]
     },
     {
-      "comment": "The entry document must never be cached, or a deploy will not reach anyone still holding the old one.",
       "source": "/",
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
@@ -28,7 +26,6 @@
       ]
     },
     {
-      "comment": "Social cards: cached, but not immutably — the art will be re-cut.",
       "source": "/(og|og-small).jpg",
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" },
@@ -43,7 +40,6 @@
       ]
     },
     {
-      "comment": "Baseline hardening. Deliberately NOT setting COOP/COEP: the texture bake pool uses plain module Workers, which do not need cross-origin isolation, and enabling it would break any third-party embed later.",
       "source": "/(.*)",
       "headers": [
         { "key": "X-Content-Type-Options", "value": "nosniff" },
